@@ -1,0 +1,18 @@
+[applications]
+    [applications.app1]
+        code_url = "git@github.com:username/repo1.git"
+        config_url = "git@github.com:username/repo1_config.git"
+        ssh_token = "your_ssh_token_here"
+
+    [applications.app2]
+        code_url = "git@github.com:username/repo2.git@mybranch"
+        config_url = "git@github.com:username/repo2_config.git"
+        ssh_token = "your_ssh_token_here"
+        command = "update.sh"
+        interval = 300
+        local_path = "/path/to/your/app2"
+
+
+        # To add: Feedback/Observability Endpoint - Different branch?
+        # To add: Healthcheck Endpoint
+        # To add: Deployment Strategy

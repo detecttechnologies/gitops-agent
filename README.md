@@ -47,4 +47,4 @@ git-agent -c config.toml
 
 ## Contributing
 
-This project is an initial PoC, and contributions are more than welcome! The design of the API on this project is inspired by <https://github.com/kitplummer/goa>.
+This project is an initial PoC, and contributions are more than welcome!
