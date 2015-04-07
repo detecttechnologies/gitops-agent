@@ -6,43 +6,26 @@ Git Watcher Agent is a Python-based tool that continuously monitors remote Git r
 
 - Clone and pull 1. Software updates 2. Configuration Updates from multiple Git repositories
 - Execute custom commands when changes are detected
-- Configurable via `.toml` files
-- Designed for watching git repositories for non-k8s server environments
+
+- Designed for Git for non-k8s server environments
 
 ## Installation
 
-You can install Git Watcher Agent via pip:
+You can install Git Agent by running the below command. Please note that this has only been tested on Ubuntu.
+
+```bash
+sudo apt-get update
+sudo apt-get install -y curl
+curl -sL <hosted endpoint for install.sh> | sudo bash
+```
 
 ## Usage
 
-### Configuration
-
-Create a config.toml file with the following structure:
-
-```toml
-[[repositories]]
-name = "app1"
-url = "git@github.com:username/repo1.git"
-branch = "main"
-ssh_token = "your_ssh_token_here"
-command = "deploy.sh"
-interval = 120  # in seconds
-
-[[repositories]]
-name = "app2"
-url = "git@github.com:username/repo2.git"
-branch = "develop"
-ssh_token = "your_ssh_token_here"
-command = "update.sh"
-interval = 300  # in seconds
-```
-
-## Running the Agent
-
-To start the agent, use the following command:
+After installation, the agent is automatically running as a systemd service on your system all the time. You can configure the run settings by running the below commands
 
 ```sh
-git-agent -c config.toml
+git-agent --configure         ## <Make the changes you want in the editor>
+sudo systemctl restart git-agent.service
 ```
 
 ## Contributing
