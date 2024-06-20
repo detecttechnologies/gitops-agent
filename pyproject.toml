@@ -3,12 +3,12 @@
     build-backend = "setuptools.build_meta"
 
 [project]
-    name = "git-agent"
+    name = "gitops-agent"
     version = "0.1.0"
-    description = "A Git agent for managing software code and configs on non-k8s servers"
+    description = "A GitOps agent for managing software code and configs on non-k8s servers"
     readme = "README.md"
     requires-python = ">=3.6"
-    keywords = ["git", "classical", "infrastructure", "on-premise", "servers"]
+    keywords = ["git", "gitops", "classical", "infrastructure", "on-premise", "servers"]
     license = { text = "MIT" }
     authors = [{ name = "RS Nikhil Krishna", email = "rsnk96@gmail.com" }]
     classifiers = [
@@ -20,7 +20,7 @@
         "Development Status :: 3 - Alpha",
     ]
     dependencies = ["gitpython", "toml"]
-    scripts = { "git-agent" = "git_agent.agent:main" }
+    scripts = { "gitops-agent" = "gitops_agent.agent:main" }
 
 [tool.setuptools]
     include-package-data = true
