@@ -47,3 +47,11 @@ Here are some other related references:
 4. <https://endjin.com/blog/2020/10/gitops-not-just-for-kubernetes>
 5. <https://samiyaakhtar.medium.com/gitops-observability-visualizing-the-journey-of-a-container-5f6ef1f3c9d2>
 6. <https://github.com/weaveworks/awesome-gitops>
+
+## Near Alternatives
+
+There are some near alternatives to this that you should consider before utilizing this. This solution is largely meant to work with independent isolated systems without depending on any other systems (like Mender/CFEngine) being installed.
+
+1. FluxCD/ArgoCD (if you have a k8s cluster)
+2. Integrating a tool like Mender and Ansible with your git hosting solution (github/gitlab) - [Blog by Siemens detailing the same](https://opensource.siemens.com/events/2023/slides/Matthias_Luescher_Automating_and_managing_an_IoT_Fleet_Using_Git.pdf)
+3. A configuration management tool like CFEngine
