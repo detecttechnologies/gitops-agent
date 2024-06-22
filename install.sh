@@ -6,6 +6,7 @@ BRANCH="main"  # Adjust branch name as necessary
 
 # Step 1: Install the Python package from GitHub
 echo "Installing GitOps Agent from GitHub..."
+python3 -m pip install --upgrade pip
 pip install git+https://github.com/$REPO.git@$BRANCH
 
 # Step 2: Download the config.toml file into /etc/gitops-agent/

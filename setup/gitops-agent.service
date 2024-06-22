@@ -6,7 +6,8 @@ After=network.target
 Type=simple
 Restart=on-failure
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 -m gitops-agent
+ExecStart=gitops-agent
 
 [Install]
 WantedBy=multi-user.target
+

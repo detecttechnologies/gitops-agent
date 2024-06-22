@@ -12,19 +12,20 @@ This tool focuses largely on application and configuration management, and not o
 
 ## Installation
 
-You can install GitOps Agent by running the below command. Please note that this has only been tested on Ubuntu.
+If the device doesn't already have an SSH key, you can create one with `ssh-keygen`. Ensure that this device SSH key is registered as a Deploy Key in the
+
+1. Application Repository
+2. Application Configuration Repository
+
+You can now install GitOps Agent by running the below command.
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y curl
-curl -sL https://raw.githubusercontent.com/rsnk96/gitops-agent/main/install.sh | sudo bash
+curl -sL https://bit.ly/gitops-agent-installer | sudo bash
 ```
 
-The content of this repository just acts as an agent installed locally on the intended deployment-server. You will additionally require one or many git repositories that you host (can be private git repos), where you will maintain the actual configuration of applications and configurations you'd like deployed on the destination device.
-
-## Usage
-
-Ensure thatyour SSH key is registered so that you can clone both the configuration and code repositories
+## Configuration
 
 After installation, the agent is automatically running as a systemd service on your system all the time. You can configure the run settings by running the below commands
 
@@ -32,6 +33,17 @@ After installation, the agent is automatically running as a systemd service on y
 gitops-agent --configure         ## <Make the changes you want in the editor>
 sudo systemctl restart gitops-agent.service
 ```
+
+## Online Repository Configuration
+
+Do ensure that your app-configuration git repository allows pushes from unverified users. On Gitlab, this option might be enabled by default, and you have to disable it manually for your app-configuration repository. To do so on Gitlab, you can go to Repository Settings --> Repository --> Push rules --> Disable `Reject unverified users`
+
+## To-Do
+
+- Add logs of the post-updation-command running in the feedback loop
+- Sample Gitlab/Github pipelines for validating updates to the config repo
+- Add diagrams showing data flow
+- Please note that this has only been tested on Ubuntu. It is known to not run properly on WSL due to an [issue](https://github.com/gitpython-developers/GitPython/issues/1902) with how GitPython handles WSL paths
 
 ## Contributing
 
@@ -48,7 +60,7 @@ Here are some other related references:
 5. <https://samiyaakhtar.medium.com/gitops-observability-visualizing-the-journey-of-a-container-5f6ef1f3c9d2>
 6. <https://github.com/weaveworks/awesome-gitops>
 
-## Near Alternatives
+### Near Alternatives
 
 There are some near alternatives to this that you should consider before utilizing this. This solution is largely meant to work with independent isolated systems without depending on any other systems (like Mender/CFEngine) being installed.
 

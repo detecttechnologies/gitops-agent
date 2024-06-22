@@ -25,17 +25,18 @@ class GitOpsAgent:
         while True:
             for app_name, app_config in self.apps.items():
                 app_config_url, app_config_branch = self.__parse_config(app_config)
-                updated_config, cfg_ret, cfg_status = self.pull_config(app_name, app_config_url, app_config_branch)
+                updated_config, cfg_git_stats = self.pull_config(app_name, app_config_url, app_config_branch)
                 if updated_config:
-                    app_ret, app_status = self.pull_app(app_name, updated_config)
+                    app_git_stats = self.pull_app(app_name, updated_config)
                 else:
-                    app_ret, app_status = True, "Not checked for updates"
-                self.push_status(app_name, app_config_url, app_config_branch, cfg_ret, cfg_status, app_ret, app_status)
+                    app_git_stats = (True, "Not checked for updates", "NA")
+                self.push_status(app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats)
+                print(f"Sleeping for {app_config.get('interval', 300)} seconds...")
                 time.sleep(app_config.get("interval", 300))
 
     def pull_config(self, app_name, app_config_url, app_config_branch):
         initial_config = self.__check_commit_of_this_infra(app_name)
-        ret, status = self.__update_git_repo(
+        ret, status, comm = self.__update_git_repo(
             f"{app_name}-config", app_config_url, app_config_branch, f"/opt/gitops-agent/app-configs/{app_name}"
         )
         final_config = self.__check_commit_of_this_infra(app_name)
@@ -51,9 +52,11 @@ class GitOpsAgent:
             config_contents_dont_match = False
         app_to_be_updated = config_changed_at_repo or code_not_cloned or config_contents_dont_match
         final_config = False if not app_to_be_updated else final_config
-        return final_config, ret, status
+        return final_config, (ret, status, comm)
 
-    def push_status(self, app_name, app_config_url, app_config_branch, cfg_ret, cfg_status, app_ret, app_status):
+    def push_status(self, app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats):
+        app_ret, app_status, app_commit = app_git_stats
+        cfg_ret, cfg_status, cfg_commit = cfg_git_stats
         app_name2 = f"{app_name}-monitoring"
         app_config_branch = f"{app_config_branch}-monitoring"
         self.__update_git_repo(
@@ -76,8 +79,10 @@ class GitOpsAgent:
                 app_name: {
                     "config-updation": cfg_ret,
                     "config-updation-status": cfg_status,
+                    "config-repo-latest-commit": cfg_commit,
                     "app-updation": app_ret,
                     "app-updation-status": app_status,
+                    "app-repo-latest-commit": app_commit,
                 }
             }
         )
@@ -88,8 +93,10 @@ class GitOpsAgent:
 
         # Add, commit and push the changes
         repo = Repo(f"/opt/gitops-agent/app-configs/{app_name2}")
-        if repo.is_dirty():
+        if repo.is_dirty() or repo.untracked_files:
             repo.git.add(all=True)
+            repo.git.config("user.name", self.infra_name)
+            repo.git.config("user.email", "<>")
             repo.git.commit("-m", "Updated status")
 
         try:
@@ -98,12 +105,11 @@ class GitOpsAgent:
             repo_remote_commit = None
         repo_commit_mismatching = str(repo.active_branch.commit) != repo_remote_commit
         if repo_commit_mismatching:
-            repo.config_writer().set_value("user", "name", self.infra_name).release()
             repo.git.push("--set-upstream", "origin", app_config_branch)
             print(f"Pushed status for {app_name} to file {feedback_file.stem} at branch {app_config_branch}")
 
     def pull_app(self, app_name, app_config):
-        ret, status = self.__update_git_repo(
+        ret, status, commit = self.__update_git_repo(
             app_name,
             app_config["code_url"],
             "",
@@ -117,7 +123,7 @@ class GitOpsAgent:
             target_path = Path(app_config["code_local_path"])
             print(f"Executing post-update command for {app_name}...")
             subprocess.run(post_updation_command, shell=True, cwd=target_path)
-        return ret, status
+        return ret, status, commit
 
     def __parse_config(self, app_config):
         git_url = app_config["config_url"]
@@ -188,6 +194,10 @@ class GitOpsAgent:
                         files = repo.git.ls_files()
                         if files:
                             repo.git.rm("-rf", ".")
+                            # Create an empty commit
+                            repo.git.config("user.name", self.infra_name)
+                            repo.git.config("user.email", "<>")
+                            repo.git.commit("--allow-empty", "-m", "Initial commit")
                 else:
                     repo.git.checkout(app_branch)
                     repo.git.pull(app_url, app_branch)
@@ -196,7 +206,9 @@ class GitOpsAgent:
             print(f"Error occurred while updating repository {app_name}: {err}")
             update_status = False
         git_status = repo.git.status()
-        return update_status, git_status
+        # Get the hash and date of the latest commit
+        latest_commit = repo.git.log("-1", "--pretty=format:'%h - %s (%an, %ad)'")
+        return update_status, git_status, latest_commit
 
 
 def main():

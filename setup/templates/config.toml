@@ -10,7 +10,3 @@ infra_name = "xyz"
         #     config_url = "INSERT_GIT_SSH_URL_HERE"
         #     interval = "INSERT INT OF INTERVAL IN SECS, OPTIONAL ARG"
 
-
-        # To add: Feedback/Observability Endpoint - Different branch?
-        # To add: Healthcheck Endpoint
-        # To add: Deployment Strategy
