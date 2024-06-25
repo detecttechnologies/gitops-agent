@@ -1,12 +1,14 @@
 import argparse
 import os
 import shutil
-import subprocess
+import subprocess as sp
 import time
 from pathlib import Path
 
 import toml
-from git import Repo, GitCommandError
+from git import Repo
+
+from gitops_agent import git_operations as gops
 
 
 class GitOpsAgent:
@@ -20,26 +22,31 @@ class GitOpsAgent:
     def run(self):
         if self.config_mode is True:
             default_editor = os.environ.get("EDITOR", "/usr/bin/nano")
-            subprocess.call([default_editor, self.config_file])
+            sp.call([default_editor, self.config_file])
             return
         while True:
             for app_name, app_config in self.apps.items():
                 app_config_url, app_config_branch = self.__parse_config(app_config)
                 updated_config, cfg_git_stats = self.pull_config(app_name, app_config_url, app_config_branch)
                 if updated_config:
-                    app_git_stats = self.pull_app(app_name, updated_config)
+                    app_git_stats, cmd_stats = self.pull_app(app_name, updated_config)
                 else:
                     app_git_stats = (True, "Not checked for updates", "NA")
-                self.push_status(app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats)
+                    cmd_stats = (True, "Nothing was run")
+                self.push_status(app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats)
                 print(f"Sleeping for {app_config.get('interval', 300)} seconds...")
                 time.sleep(app_config.get("interval", 300))
 
     def pull_config(self, app_name, app_config_url, app_config_branch):
-        initial_config = self.__check_commit_of_this_infra(app_name)
-        ret, status, comm = self.__update_git_repo(
-            f"{app_name}-config", app_config_url, app_config_branch, f"/opt/gitops-agent/app-configs/{app_name}"
+        initial_config = gops.check_commit_of_this_infra(app_name, self.infra_name)
+        ret, status, comm = gops.update_git_repo(
+            f"{app_name}-config",
+            app_config_url,
+            app_config_branch,
+            self.infra_name,
+            f"/opt/gitops-agent/app-configs/{app_name}",
         )
-        final_config = self.__check_commit_of_this_infra(app_name)
+        final_config = gops.check_commit_of_this_infra(app_name, self.infra_name)
 
         config_changed_at_repo = set(initial_config) - set(final_config)
         code_not_cloned = not final_config["code_local_path"].exists()
@@ -49,20 +56,22 @@ class GitOpsAgent:
                 != final_config["config_file_path"].read_bytes()
             )
         else:
-            config_contents_dont_match = False
+            config_contents_dont_match = True
         app_to_be_updated = config_changed_at_repo or code_not_cloned or config_contents_dont_match
         final_config = False if not app_to_be_updated else final_config
         return final_config, (ret, status, comm)
 
-    def push_status(self, app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats):
+    def push_status(self, app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats):
         app_ret, app_status, app_commit = app_git_stats
         cfg_ret, cfg_status, cfg_commit = cfg_git_stats
+        cmd_ret, cmd_logs = cmd_stats
         app_name2 = f"{app_name}-monitoring"
         app_config_branch = f"{app_config_branch}-monitoring"
-        self.__update_git_repo(
+        gops.update_git_repo(
             app_name2,
             app_config_url,
             app_config_branch,
+            self.infra_name,
             f"/opt/gitops-agent/app-configs/{app_name2}",
             create_branch=True,
         )
@@ -83,6 +92,9 @@ class GitOpsAgent:
                     "app-updation": app_ret,
                     "app-updation-status": app_status,
                     "app-repo-latest-commit": app_commit,
+                    "post-updation-command-return-val": cmd_ret,
+                    "post-updation-command-logs": cmd_logs,
+                    "last-updated": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
                 }
             }
         )
@@ -90,6 +102,7 @@ class GitOpsAgent:
         # Dump `feedback` as a toml file at feedback_file path
         with open(feedback_file, "w") as f:
             toml.dump(feedback, f)
+            f.write("\n# You can render the escaped text with https://onlinetexttools.com/unescape-text")
 
         # Add, commit and push the changes
         repo = Repo(f"/opt/gitops-agent/app-configs/{app_name2}")
@@ -109,10 +122,11 @@ class GitOpsAgent:
             print(f"Pushed status for {app_name} to file {feedback_file.stem} at branch {app_config_branch}")
 
     def pull_app(self, app_name, app_config):
-        ret, status, commit = self.__update_git_repo(
+        ret, status, commit = gops.update_git_repo(
             app_name,
             app_config["code_url"],
             "",
+            self.infra_name,
             app_config["code_local_path"],
             checkout_hash=app_config["code_hash"],
         )
@@ -122,8 +136,9 @@ class GitOpsAgent:
         if post_updation_command:
             target_path = Path(app_config["code_local_path"])
             print(f"Executing post-update command for {app_name}...")
-            subprocess.run(post_updation_command, shell=True, cwd=target_path)
-        return ret, status, commit
+            # Run post_updation_command, capture execution logs and also print to stdout
+            cmd_ret, cmd_logs = run_command_with_tee(post_updation_command, target_path)
+        return (ret, status, commit), (cmd_ret, cmd_logs)
 
     def __parse_config(self, app_config):
         git_url = app_config["config_url"]
@@ -137,78 +152,20 @@ class GitOpsAgent:
 
         return git_url, git_branch
 
-    def __check_commit_of_this_infra(self, app_name):
-        infra_meta_file = Path(f"/opt/gitops-agent/app-configs/{app_name}/{self.infra_name}/infra_meta.toml")
-        if not infra_meta_file.parent.parent.exists():
-            print(infra_meta_file.parent.parent, " does not yet exist")
-            return {}  # The config directory hasn't been cloned yet, so let the config be cloned
-        elif not infra_meta_file.exists():
-            raise FileNotFoundError(f"Infra meta file not found: {infra_meta_file}")
 
-        with open(infra_meta_file) as f:
-            infra_meta = toml.load(f)
-            app_meta = infra_meta[app_name]
+def run_command_with_tee(command, target_path):
+    process = sp.Popen(command, stdout=sp.PIPE, stderr=sp.STDOUT, text=True, shell=True, cwd=target_path)
+    output = ""
 
-        curr_app_config = {}
-        curr_app_config["config_file_path"] = Path(
-            f"/opt/gitops-agent/app-configs/{app_name}/{self.infra_name}/",
-            app_meta["config_relative_path_in_this_folder"],
-        )
-        curr_app_config["code_url"] = app_meta["code_url"]
-        curr_app_config["code_hash"] = app_meta["code_hash"]
-        curr_app_config["code_local_path"] = Path(app_meta["code_local_path"])
-        curr_app_config["config_file_dst_path_in_local"] = (
-            Path(app_meta["code_local_path"]) / app_meta["config_relative_path_in_code"]
-        )
-        curr_app_config["post_updation_command"] = app_meta.get("post_updation_command", None)
-        curr_app_config["interval"] = app_meta.get("interval", 300)
+    while True:
+        line = process.stdout.readline()
+        if not line:
+            break
+        print("\t" + line, end="")
+        output += line
 
-        return curr_app_config
-
-    def __update_git_repo(self, app_name, app_url, app_branch, local_path, checkout_hash=None, create_branch=False):
-        if app_url.endswith(f"@{app_branch}"):
-            app_url = app_url[: -len(f"@{app_branch}")]
-
-        print(f"Updating repository {app_name}...")
-        if not Path(local_path).exists():
-            repo = Repo.clone_from(app_url, local_path)
-        else:
-            repo = Repo(local_path)
-
-        # Update the local with changes from remote
-        repo.git.fetch("-p")
-
-        try:
-            if checkout_hash:
-                repo.git.checkout(checkout_hash)
-            else:
-                if create_branch:
-                    # Check if the branch exists
-                    all_branches = repo.refs
-                    branch_present = [e for e in all_branches if app_branch in str(e)]
-                    if branch_present:
-                        repo.git.checkout(app_branch)
-                        repo.git.pull(app_url, app_branch)
-                    else:
-                        repo.git.checkout("--orphan", app_branch)
-                        files = repo.git.ls_files()
-                        if files:
-                            repo.git.rm("-rf", ".")
-                            # Create an empty commit
-                            repo.git.config("user.name", self.infra_name)
-                            repo.git.config("user.email", "<>")
-                            repo.git.commit("--allow-empty", "-m", "Initial commit")
-                else:
-                    repo.git.checkout(app_branch)
-                    repo.git.pull(app_url, app_branch)
-            update_status = True
-        except GitCommandError as err:
-            print(f"Error occurred while updating repository {app_name}: {err}")
-            update_status = False
-        git_status = repo.git.status()
-        # Get the hash and date of the latest commit
-        latest_commit = repo.git.log("-1", "--pretty=format:'%h - %s (%an, %ad)'")
-        return update_status, git_status, latest_commit
+    process.wait()
+    return process.returncode, output
 
 
 def main():

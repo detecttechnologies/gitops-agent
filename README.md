@@ -40,8 +40,10 @@ Do ensure that your app-configuration git repository allows pushes from unverifi
 
 ## To-Do
 
-- Add logs of the post-updation-command running in the feedback loop
+- Add app-deletion functionality, if section is removed in configuration
 - Sample Gitlab/Github pipelines for validating updates to the config repo
+- Evaluate if we should force-reset local changes...currently, if the config repo is already up to date, but someone has manually made a change to a file, it doesn't overwrite the file (as it's a change that's not staged for commit, but there's no need to commit as there's no incoming change)
+- Even if the config repo hasn't changed, every loop we should check if the commit of the app has changed (e.g. through manual operations) - i.e. enforce consistency with the gitops-agent
 - Add diagrams showing data flow
 - Please note that this has only been tested on Ubuntu. It is known to not run properly on WSL due to an [issue](https://github.com/gitpython-developers/GitPython/issues/1902) with how GitPython handles WSL paths
 
