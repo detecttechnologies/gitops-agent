@@ -6,9 +6,10 @@ This tool focuses largely on application and configuration management, and not o
 
 ## Features
 
-- Clone and pull 1. Software updates 2. Configuration Updates from multiple Git repositories
-- Execute custom commands when changes are detected
-- Designed for GitOps for non-k8s server environments
+- Designed for GitOps for non-k8s server environments for multiple simultaneous applications
+- Handle CD for a server for a 1. Software applications 2. Configuration for said applications
+- Execute custom commands when the deployment artifacts or the configuration changes
+- Observability with no extra dependencies within the same config git repo
 
 ## Installation
 

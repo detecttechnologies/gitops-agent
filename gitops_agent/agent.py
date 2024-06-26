@@ -50,10 +50,9 @@ class GitOpsAgent:
 
         config_changed_at_repo = set(initial_config) - set(final_config)
         code_not_cloned = not final_config["code_local_path"].exists()
-        if final_config["config_file_dst_path_in_local"].exists():
+        if final_config["config_dst_path_abs"].exists():
             config_contents_dont_match = (
-                final_config["config_file_dst_path_in_local"].read_bytes()
-                != final_config["config_file_path"].read_bytes()
+                final_config["config_dst_path_abs"].read_bytes() != final_config["config_file_path"].read_bytes()
             )
         else:
             config_contents_dont_match = True
@@ -128,10 +127,10 @@ class GitOpsAgent:
             "",
             self.infra_name,
             app_config["code_local_path"],
-            checkout_hash=app_config["code_hash"],
+            checkout_hash=app_config["code_commit_hash"],
         )
         # copy config file to code folder
-        shutil.copy(app_config["config_file_path"], app_config["config_file_dst_path_in_local"])
+        shutil.copy(app_config["config_file_path"], app_config["config_dst_path_abs"])
         post_updation_command = app_config["post_updation_command"]
         if post_updation_command:
             target_path = Path(app_config["code_local_path"])

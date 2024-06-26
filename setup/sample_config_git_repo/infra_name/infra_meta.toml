@@ -1,14 +1,16 @@
 [app_name_here]
-    config_relative_path_in_this_folder = "UPDATE HERE"
     code_url = "INSERT_GIT_REPO_SSH_URL_HERE"
-    code_hash = "INSERT_HASH_HERE"
-    code_local_path = "/mnt/abc/def"
-    config_relative_path_in_code = "UPDATE HERE"
+    code_commit_hash = "INSERT_COMMIT_HASH_HERE"
+    code_local_path = "Ex: /mnt/abc/def"
+    config_src_path_rel_in_this_repo = "Ex: infra_name/config.toml"
+    config_dst_path_abs = "Ex: /mnt/abc/def/config.toml"
+    post_updation_command = "Optional, Ex: docker restart xyz"
 
     # # Reference:
     # [APP_NAME_HERE]
-    #     config_relative_path_in_this_folder = "INSERT_CONFIG_FILE_RELATIVE_PATH_HERE"
     #     code_url = "INSERT_GIT_REPO_SSH_URL_HERE"
-    #     code_hash = "INSERT_HASH_HERE"
+    #     code_commit_hash = "INSERT_HASH_HERE"
     #     code_local_path = "/mnt/abc/def"
-    #     post_updation_command = "INSERT_COMMAND_HERE"
+    #     config_src_path_rel_in_this_repo = "INSERT_CONFIG_FILE_RELATIVE_PATH_HERE"
+    #     config_dst_path_abs = "UPDATE HERE"
+    #     post_updation_command = "INSERT_COMMAND_HERE, OPTIONAL"

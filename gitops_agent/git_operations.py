@@ -17,28 +17,27 @@ def check_commit_of_this_infra(app_name, infra_name):
 
     curr_app_config = {}
     curr_app_config["config_file_path"] = Path(
-        f"/opt/gitops-agent/app-configs/{app_name}/{infra_name}/",
-        app_meta["config_relative_path_in_this_folder"],
+        f"/opt/gitops-agent/app-configs/{app_name}/",
+        app_meta["config_src_path_rel_in_this_repo"],
     )
     curr_app_config["code_url"] = app_meta["code_url"]
-    curr_app_config["code_hash"] = app_meta["code_hash"]
+    curr_app_config["code_commit_hash"] = app_meta["code_commit_hash"]
     curr_app_config["code_local_path"] = Path(app_meta["code_local_path"])
-    curr_app_config["config_file_dst_path_in_local"] = (
-        Path(app_meta["code_local_path"]) / app_meta["config_relative_path_in_code"]
-    )
+    curr_app_config["config_dst_path_abs"] = Path(app_meta["config_dst_path_abs"])
     curr_app_config["post_updation_command"] = app_meta.get("post_updation_command", None)
-    curr_app_config["interval"] = app_meta.get("interval", 300)
 
     return curr_app_config
 
 
-def update_git_repo(app_name, app_url, app_branch, infra_name, local_path, checkout_hash=None, create_branch=False):
-    if app_url.endswith(f"@{app_branch}"):
-        app_url = app_url[: -len(f"@{app_branch}")]
+def update_git_repo(
+    app_name, git_url, git_branch, committer_name, local_path, checkout_hash=None, create_branch=False
+):
+    if git_url.endswith(f"@{git_branch}"):
+        git_url = git_url[: -len(f"@{git_branch}")]
 
     print(f"Updating repository {app_name}...")
     if not Path(local_path).exists():
-        repo = Repo.clone_from(app_url, local_path)
+        repo = Repo.clone_from(git_url, local_path)
     else:
         repo = Repo(local_path)
 
@@ -52,22 +51,22 @@ def update_git_repo(app_name, app_url, app_branch, infra_name, local_path, check
             if create_branch:
                 # Check if the branch exists
                 all_branches = repo.refs
-                branch_present = [e for e in all_branches if app_branch in str(e)]
+                branch_present = [e for e in all_branches if git_branch in str(e)]
                 if branch_present:
-                    repo.git.checkout(app_branch)
-                    repo.git.pull(app_url, app_branch)
+                    repo.git.checkout(git_branch)
+                    repo.git.pull(git_url, git_branch)
                 else:
-                    repo.git.checkout("--orphan", app_branch)
+                    repo.git.checkout("--orphan", git_branch)
                     files = repo.git.ls_files()
                     if files:
                         repo.git.rm("-rf", ".")
                         # Create an empty commit
-                        repo.git.config("user.name", infra_name)
+                        repo.git.config("user.name", committer_name)
                         repo.git.config("user.email", "<>")
                         repo.git.commit("--allow-empty", "-m", "Initial commit")
             else:
-                repo.git.checkout(app_branch)
-                repo.git.pull(app_url, app_branch)
+                repo.git.checkout(git_branch)
+                repo.git.pull(git_url, git_branch)
         update_status = True
     except GitCommandError as err:
         print(f"Error occurred while updating repository {app_name}: {err}")
