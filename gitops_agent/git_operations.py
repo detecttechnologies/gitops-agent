@@ -24,6 +24,7 @@ def check_commit_of_this_infra(app_name, infra_name):
     curr_app_config["code_commit_hash"] = app_meta["code_commit_hash"]
     curr_app_config["code_local_path"] = Path(app_meta["code_local_path"])
     curr_app_config["config_dst_path_abs"] = Path(app_meta["config_dst_path_abs"])
+    curr_app_config["pre_updation_command"] = app_meta.get("pre_updation_command", None)
     curr_app_config["post_updation_command"] = app_meta.get("post_updation_command", None)
 
     return curr_app_config

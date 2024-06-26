@@ -79,20 +79,26 @@ class GitOpsAgent:
 
         if feedback_file.exists():
             with open(feedback_file) as f:
-                feedback = toml.load(f)
+                try:
+                    feedback = toml.load(f)
+                except toml.decoder.TomlDecodeError:
+                    feedback = {}
         else:
             feedback = {}
         feedback.update(
             {
                 app_name: {
-                    "config-updation": cfg_ret,
-                    "config-updation-status": cfg_status,
-                    "config-repo-latest-commit": cfg_commit,
-                    "app-updation": app_ret,
-                    "app-updation-status": app_status,
-                    "app-repo-latest-commit": app_commit,
-                    "post-updation-command-return-val": cmd_ret,
-                    "post-updation-command-logs": cmd_logs,
+                    "config-updation": {
+                        "return-value": cfg_ret,
+                        "git-status": cfg_status,
+                        "repo-latest-commit": cfg_commit,
+                    },
+                    "app-updation": {
+                        "return-value": app_ret,
+                        "git-status": app_status,
+                        "repo-latest-commit": app_commit,
+                    },
+                    "extra-command-output": {"command-return-val": str(cmd_ret), "command-run-logs": str(cmd_logs)},
                     "last-updated": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
                 }
             }
@@ -121,22 +127,29 @@ class GitOpsAgent:
             print(f"Pushed status for {app_name} to file {feedback_file.stem} at branch {app_config_branch}")
 
     def pull_app(self, app_name, app_config):
+        pre_updation_command = app_config["pre_updation_command"]
+        post_updation_command = app_config["post_updation_command"]
+        target_path = Path(app_config["code_local_path"])
+
+        cmd_ret, cmd_logs = {}, {}
+
+        if pre_updation_command and target_path.exists():
+            print(f"Executing pre-update command for {app_name}: {pre_updation_command}...")
+            cmd_ret["pre"], cmd_logs["pre"] = run_command_with_tee(pre_updation_command, target_path)
+
         ret, status, commit = gops.update_git_repo(
             app_name,
             app_config["code_url"],
             "",
             self.infra_name,
-            app_config["code_local_path"],
+            target_path,
             checkout_hash=app_config["code_commit_hash"],
         )
         # copy config file to code folder
         shutil.copy(app_config["config_file_path"], app_config["config_dst_path_abs"])
-        post_updation_command = app_config["post_updation_command"]
         if post_updation_command:
-            target_path = Path(app_config["code_local_path"])
-            print(f"Executing post-update command for {app_name}...")
-            # Run post_updation_command, capture execution logs and also print to stdout
-            cmd_ret, cmd_logs = run_command_with_tee(post_updation_command, target_path)
+            print(f"Executing post-update command for {app_name}: {post_updation_command}...")
+            cmd_ret["post"], cmd_logs["post"] = run_command_with_tee(post_updation_command, target_path)
         return (ret, status, commit), (cmd_ret, cmd_logs)
 
     def __parse_config(self, app_config):

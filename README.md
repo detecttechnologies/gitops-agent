@@ -42,6 +42,7 @@ Do ensure that your app-configuration git repository allows pushes from unverifi
 ## To-Do
 
 - Add app-deletion functionality, if section is removed in configuration
+- Push the status back only after all apps have been updated, rather than doing it for all individual apps
 - Sample Gitlab/Github pipelines for validating updates to the config repo
 - Evaluate if we should force-reset local changes...currently, if the config repo is already up to date, but someone has manually made a change to a file, it doesn't overwrite the file (as it's a change that's not staged for commit, but there's no need to commit as there's no incoming change)
 - Even if the config repo hasn't changed, every loop we should check if the commit of the app has changed (e.g. through manual operations) - i.e. enforce consistency with the gitops-agent
