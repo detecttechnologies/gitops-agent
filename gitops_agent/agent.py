@@ -155,7 +155,9 @@ class GitOpsAgent:
             checkout_hash=app_config["code_commit_hash"],
         )
         # copy config file to code folder
-        shutil.copy2(app_config["config_src_path_abs"], app_config["config_dst_path_abs"])
+        if app_config["config_src_path_abs"] and app_config["config_dst_path_abs"]:
+            shutil.copy2(app_config["config_src_path_abs"], app_config["config_dst_path_abs"])
+
         if post_updation_command:
             print(f"Executing post-update command for {app_name}: {post_updation_command}...")
             cmd_ret["post"], cmd_logs["post"] = run_command_with_tee(post_updation_command, target_path)
@@ -174,12 +176,16 @@ class GitOpsAgent:
         return git_url, git_branch
 
     def __compare_file_contents(self, f1, f2):
+        if f1 is None or f2 is None:
+            return True
+
+        if not (f1.exists() and f2.exists()):
+            return False
+
         def strip_and_compare(file1, file2):
             with open(file1, "r") as f1, open(file2, "r") as f2:
                 return f1.read().replace(" ", "").replace("\n", "") == f2.read().replace(" ", "").replace("\n", "")
 
-        if not (f1.exists() and f2.exists()):
-            return False
         return strip_and_compare(f1, f2)
 
 

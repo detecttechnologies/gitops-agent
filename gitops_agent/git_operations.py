@@ -16,16 +16,20 @@ def check_commit_of_this_infra(app_name, infra_name):
         app_meta = infra_meta[app_name]
 
     curr_app_config = {}
-    curr_app_config["config_src_path_abs"] = Path(
-        f"/opt/gitops-agent/app-configs/{app_name}/",
-        app_meta["config_src_path_rel_in_this_repo"],
-    )
     curr_app_config["code_url"] = app_meta["code_url"]
     curr_app_config["code_commit_hash"] = app_meta["code_commit_hash"]
     curr_app_config["code_local_path"] = Path(app_meta["code_local_path"])
-    curr_app_config["config_dst_path_abs"] = Path(app_meta["config_dst_path_abs"])
     curr_app_config["pre_updation_command"] = app_meta.get("pre_updation_command", None)
     curr_app_config["post_updation_command"] = app_meta.get("post_updation_command", None)
+
+    if "config_src_path_rel_in_this_repo" in app_meta and app_meta["config_dst_path_abs"] in app_meta:
+        curr_app_config["config_dst_path_abs"] = Path(app_meta["config_dst_path_abs"])
+        curr_app_config["config_src_path_abs"] = Path(
+            f"/opt/gitops-agent/app-configs/{app_name}/",
+            app_meta["config_src_path_rel_in_this_repo"],
+        )
+    else:
+        curr_app_config["config_dst_path_abs"] = curr_app_config["config_src_path_abs"] = None
 
     return curr_app_config
 
