@@ -28,8 +28,8 @@ class GitOpsAgent:
             sp.call([default_editor, self.config_file])
             return
         while True:
-            for app_name, app_config in self.apps.items():
-                app_config_url, app_config_branch = self.__parse_config(app_config)
+            for app_name, app_config_url in self.apps.items():
+                app_config_url, app_config_branch = self.__parse_config(app_config_url)
                 updated_config, cfg_git_stats = self.pull_config(app_name, app_config_url, app_config_branch)
                 if updated_config:
                     app_git_stats, cmd_stats = self.pull_app(app_name, updated_config)
@@ -163,8 +163,7 @@ class GitOpsAgent:
             cmd_ret["post"], cmd_logs["post"] = run_command_with_tee(post_updation_command, target_path)
         return (ret, status, commit), (cmd_ret, cmd_logs)
 
-    def __parse_config(self, app_config):
-        git_url = app_config["config_url"]
+    def __parse_config(self, git_url):
         if "@" in git_url.replace("git@", "", 1):
             _, git_branch = git_url.rsplit("@", 1)
         else:
