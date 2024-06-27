@@ -16,7 +16,7 @@ def check_commit_of_this_infra(app_name, infra_name):
         app_meta = infra_meta[app_name]
 
     curr_app_config = {}
-    curr_app_config["config_file_path"] = Path(
+    curr_app_config["config_src_path_abs"] = Path(
         f"/opt/gitops-agent/app-configs/{app_name}/",
         app_meta["config_src_path_rel_in_this_repo"],
     )
@@ -43,7 +43,8 @@ def update_git_repo(
         repo = Repo(local_path)
 
     # Update the local with changes from remote
-    repo.git.fetch("-p")
+    repo.git.fetch("--all", "--prune")
+    repo.git.reset("--hard", "HEAD")
 
     try:
         if checkout_hash:
@@ -55,7 +56,7 @@ def update_git_repo(
                 branch_present = [e for e in all_branches if git_branch in str(e)]
                 if branch_present:
                     repo.git.checkout(git_branch)
-                    repo.git.pull(git_url, git_branch)
+                    repo.git.pull("--rebase", "origin", git_branch)
                 else:
                     repo.git.checkout("--orphan", git_branch)
                     files = repo.git.ls_files()

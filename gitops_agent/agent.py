@@ -1,5 +1,7 @@
 import argparse
+import json
 import os
+import re
 import shutil
 import subprocess as sp
 import time
@@ -16,6 +18,7 @@ class GitOpsAgent:
         self.config_file = Path("/etc", "gitops-agent", "config.toml")
         self.config = toml.load(self.config_file)
         self.apps = self.config.get("applications", [])
+        self.interval = self.config.get("interval", 300)
         self.infra_name = self.config.get("infra_name")
         self.config_mode = config_mode
 
@@ -34,8 +37,8 @@ class GitOpsAgent:
                     app_git_stats = (True, "Not checked for updates", "NA")
                     cmd_stats = (True, "Nothing was run")
                 self.push_status(app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats)
-                print(f"Sleeping for {app_config.get('interval', 300)} seconds...")
-                time.sleep(app_config.get("interval", 300))
+            print(f"Sleeping for {self.interval} seconds...")
+            time.sleep(self.interval)
 
     def pull_config(self, app_name, app_config_url, app_config_branch):
         initial_config = gops.check_commit_of_this_infra(app_name, self.infra_name)
@@ -50,12 +53,9 @@ class GitOpsAgent:
 
         config_changed_at_repo = set(initial_config) - set(final_config)
         code_not_cloned = not final_config["code_local_path"].exists()
-        if final_config["config_dst_path_abs"].exists():
-            config_contents_dont_match = (
-                final_config["config_dst_path_abs"].read_bytes() != final_config["config_file_path"].read_bytes()
-            )
-        else:
-            config_contents_dont_match = True
+        config_contents_dont_match = not self.__compare_file_contents(
+            final_config["config_dst_path_abs"], final_config["config_src_path_abs"]
+        )
         app_to_be_updated = config_changed_at_repo or code_not_cloned or config_contents_dont_match
         final_config = False if not app_to_be_updated else final_config
         return final_config, (ret, status, comm)
@@ -75,8 +75,24 @@ class GitOpsAgent:
             create_branch=True,
         )
 
-        feedback_file = Path(f"/opt/gitops-agent/app-configs/{app_name2}/{self.infra_name}.toml")
+        current_feedback = {
+            app_name: {
+                "config-updation": {
+                    "updation-return-value": cfg_ret,
+                    "git-status": cfg_status,
+                    "git-repo-latest-commit": cfg_commit,
+                },
+                "app-updation": {
+                    "updation-return-value": app_ret,
+                    "git-status": app_status,
+                    "git-repo-latest-commit": app_commit,
+                },
+                "extra-command-output": {"command-return-val": str(cmd_ret), "command-run-logs": str(cmd_logs)},
+            },
+            "last-updated": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        }
 
+        feedback_file = Path(f"/opt/gitops-agent/app-configs/{app_name2}/{self.infra_name}.toml")
         if feedback_file.exists():
             with open(feedback_file) as f:
                 try:
@@ -85,24 +101,17 @@ class GitOpsAgent:
                     feedback = {}
         else:
             feedback = {}
-        feedback.update(
-            {
-                app_name: {
-                    "config-updation": {
-                        "return-value": cfg_ret,
-                        "git-status": cfg_status,
-                        "repo-latest-commit": cfg_commit,
-                    },
-                    "app-updation": {
-                        "return-value": app_ret,
-                        "git-status": app_status,
-                        "repo-latest-commit": app_commit,
-                    },
-                    "extra-command-output": {"command-return-val": str(cmd_ret), "command-run-logs": str(cmd_logs)},
-                    "last-updated": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                }
-            }
-        )
+
+        if (
+            app_name in feedback
+            and app_name in current_feedback
+            and json.dumps(feedback[app_name], sort_keys=True)
+            == json.dumps(current_feedback[app_name], sort_keys=True)
+        ):
+            print(f"Nothing to update for {app_name}...")
+            return  # Nothing to update
+
+        feedback.update(current_feedback)
 
         # Dump `feedback` as a toml file at feedback_file path
         with open(feedback_file, "w") as f:
@@ -146,7 +155,7 @@ class GitOpsAgent:
             checkout_hash=app_config["code_commit_hash"],
         )
         # copy config file to code folder
-        shutil.copy(app_config["config_file_path"], app_config["config_dst_path_abs"])
+        shutil.copy2(app_config["config_src_path_abs"], app_config["config_dst_path_abs"])
         if post_updation_command:
             print(f"Executing post-update command for {app_name}: {post_updation_command}...")
             cmd_ret["post"], cmd_logs["post"] = run_command_with_tee(post_updation_command, target_path)
@@ -164,6 +173,15 @@ class GitOpsAgent:
 
         return git_url, git_branch
 
+    def __compare_file_contents(self, f1, f2):
+        def strip_and_compare(file1, file2):
+            with open(file1, "r") as f1, open(file2, "r") as f2:
+                return f1.read().replace(" ", "").replace("\n", "") == f2.read().replace(" ", "").replace("\n", "")
+
+        if not (f1.exists() and f2.exists()):
+            return False
+        return strip_and_compare(f1, f2)
+
 
 def run_command_with_tee(command, target_path):
     process = sp.Popen(command, stdout=sp.PIPE, stderr=sp.STDOUT, text=True, shell=True, cwd=target_path)
@@ -177,7 +195,16 @@ def run_command_with_tee(command, target_path):
         output += line
 
     process.wait()
+    output = remove_ansi_escape_sequences(output)
     return process.returncode, output
+
+
+def remove_ansi_escape_sequences(text):
+    # Define the regular expression pattern for ANSI escape sequences
+    ansi_escape_pattern = re.compile(r"\x1b\[([0-9;]*[mGKF])")
+    # Use sub() method to replace all occurrences of the pattern with an empty string
+    cleaned_text = ansi_escape_pattern.sub("", text)
+    return cleaned_text
 
 
 def main():
