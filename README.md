@@ -1,6 +1,6 @@
 # GitOps Agent
 
-This is a Python-based tool that continuously monitors remote Git repositories for changes and performs actions based on those changes. It started as a simple git-repo watcher. However, it has evolved into a Gitops-enablement tool to help manage applications and their configurations on on-premise servers / classical & conventional infrastructure / VMs / etc without the need for Kubernetes.
+This is a Python-based tool that continuously monitors remote Git repositories for changes and performs actions based on those changes. It started as a simple git-repo watcher in [CVG, IITM](https://github.com/iitmcvg). However, it has evolved into a Gitops-enablement tool to help manage applications and their configurations on on-premise servers / classical & conventional infrastructure / VMs / etc without the need for Kubernetes.
 
 This tool focuses largely on application and configuration management, and not on infrastructure setup as with other Gitops tools linked with IaaC providers. This tool is called as an "agent", and not as an "operator" as is traditional k8s speak because in conventional infrastructure like physical servers, any client in a client-server architecture is generally called an "agent".
 
@@ -31,13 +31,32 @@ curl -sL https://bit.ly/gitops-agent-installer | sudo bash
 After installation, the agent is automatically running as a systemd service on your system all the time. You can configure the run settings by running the below commands
 
 ```sh
-gitops-agent --configure         ## <Make the changes you want in the editor>
+sudo gitops-agent --configure         ## <Make the changes you want in the editor>
 sudo systemctl restart gitops-agent.service
 ```
 
 ## Online Repository Configuration
 
 Do ensure that your app-configuration git repository allows pushes from unverified users. On Gitlab, this option might be enabled by default, and you have to disable it manually for your app-configuration repository. To do so on Gitlab, you can go to Repository Settings --> Repository --> Push rules --> Disable `Reject unverified users`
+
+## Troubleshooting
+
+### Viewing the logs of the runtime
+
+You can do so with
+
+```sh
+sudo journalctl -n 100 -fu gitops-agent
+```
+
+### Forcing a push to the monitoring branch
+
+If during initial installation, you would like to force it to push to the monitoring branch even though there may be nothing to update there, you can easily do the same by deleting your local deployment-configs, so that it appears as if it's a new installation
+
+```sh
+sudo rm -rf /opt/gitops-agent/app-configs
+sudo systemctl restart gitops-agent
+```
 
 ## To-Do
 

@@ -22,7 +22,7 @@ def check_commit_of_this_infra(app_name, infra_name):
     curr_app_config["pre_updation_command"] = app_meta.get("pre_updation_command", None)
     curr_app_config["post_updation_command"] = app_meta.get("post_updation_command", None)
 
-    if "config_src_path_rel_in_this_repo" in app_meta and app_meta["config_dst_path_abs"] in app_meta:
+    if "config_src_path_rel_in_this_repo" in app_meta and "config_dst_path_abs" in app_meta:
         curr_app_config["config_dst_path_abs"] = Path(app_meta["config_dst_path_abs"])
         curr_app_config["config_src_path_abs"] = Path(
             f"/opt/gitops-agent/app-configs/{app_name}/",
