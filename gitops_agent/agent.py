@@ -29,7 +29,7 @@ class GitOpsAgent:
             return
         while True:
             for app_name, app_config_url in self.apps.items():
-                app_config_url, app_config_branch = self.__parse_config(app_config_url)
+                app_config_url, app_config_branch = parse_config(app_config_url)
                 updated_config, cfg_git_stats = self.pull_config(app_name, app_config_url, app_config_branch)
                 if updated_config:
                     app_git_stats, cmd_stats = self.pull_app(app_name, updated_config)
@@ -53,12 +53,40 @@ class GitOpsAgent:
 
         config_changed_at_repo = set(initial_config) - set(final_config)
         code_not_cloned = not final_config["code_local_path"].exists()
-        config_contents_dont_match = not self.__compare_file_contents(
+        config_contents_dont_match = not compare_file_contents(
             final_config["config_dst_path_abs"], final_config["config_src_path_abs"]
         )
         app_to_be_updated = config_changed_at_repo or code_not_cloned or config_contents_dont_match
         final_config = False if not app_to_be_updated else final_config
         return final_config, (ret, status, comm)
+
+    def pull_app(self, app_name, app_config):
+        pre_updation_command = app_config["pre_updation_command"]
+        post_updation_command = app_config["post_updation_command"]
+        target_path = Path(app_config["code_local_path"])
+
+        cmd_ret, cmd_logs = {}, {}
+
+        if pre_updation_command and target_path.exists():
+            print(f"Executing pre-update command for {app_name}: {pre_updation_command}...")
+            cmd_ret["pre"], cmd_logs["pre"] = run_command_with_tee(pre_updation_command, target_path)
+
+        ret, status, commit = gops.update_git_repo(
+            app_name,
+            app_config["code_url"],
+            "",
+            self.infra_name,
+            target_path,
+            checkout_hash=app_config["code_commit_hash"],
+        )
+        # copy config file to code folder
+        if app_config["config_src_path_abs"] and app_config["config_dst_path_abs"]:
+            shutil.copy2(app_config["config_src_path_abs"], app_config["config_dst_path_abs"])
+
+        if post_updation_command:
+            print(f"Executing post-update command for {app_name}: {post_updation_command}...")
+            cmd_ret["post"], cmd_logs["post"] = run_command_with_tee(post_updation_command, target_path)
+        return (ret, status, commit), (cmd_ret, cmd_logs)
 
     def push_status(self, app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats):
         app_ret, app_status, app_commit = app_git_stats
@@ -135,57 +163,32 @@ class GitOpsAgent:
             repo.git.push("--set-upstream", "origin", app_config_branch)
             print(f"Pushed status for {app_name} to file {feedback_file.stem} at branch {app_config_branch}")
 
-    def pull_app(self, app_name, app_config):
-        pre_updation_command = app_config["pre_updation_command"]
-        post_updation_command = app_config["post_updation_command"]
-        target_path = Path(app_config["code_local_path"])
 
-        cmd_ret, cmd_logs = {}, {}
+def compare_file_contents(f1, f2):
+    if f1 is None or f2 is None:
+        # If they aren't supposed to exist (Ex because user hasn't defined them)
+        return True
+    elif not (f1.exists() and f2.exists()):
+        # If they are supposed to exist, but either of them doesn't
+        return False
 
-        if pre_updation_command and target_path.exists():
-            print(f"Executing pre-update command for {app_name}: {pre_updation_command}...")
-            cmd_ret["pre"], cmd_logs["pre"] = run_command_with_tee(pre_updation_command, target_path)
+    def strip_and_compare(file1, file2):
+        with open(file1, "r") as f1, open(file2, "r") as f2:
+            return f1.read().replace(" ", "").replace("\n", "") == f2.read().replace(" ", "").replace("\n", "")
 
-        ret, status, commit = gops.update_git_repo(
-            app_name,
-            app_config["code_url"],
-            "",
-            self.infra_name,
-            target_path,
-            checkout_hash=app_config["code_commit_hash"],
-        )
-        # copy config file to code folder
-        if app_config["config_src_path_abs"] and app_config["config_dst_path_abs"]:
-            shutil.copy2(app_config["config_src_path_abs"], app_config["config_dst_path_abs"])
+    return strip_and_compare(f1, f2)
 
-        if post_updation_command:
-            print(f"Executing post-update command for {app_name}: {post_updation_command}...")
-            cmd_ret["post"], cmd_logs["post"] = run_command_with_tee(post_updation_command, target_path)
-        return (ret, status, commit), (cmd_ret, cmd_logs)
 
-    def __parse_config(self, git_url):
-        if "@" in git_url.replace("git@", "", 1):
-            _, git_branch = git_url.rsplit("@", 1)
-        else:
-            git_branch = "main"
+def parse_config(git_url):
+    if "@" in git_url.replace("git@", "", 1):
+        _, git_branch = git_url.rsplit("@", 1)
+    else:
+        git_branch = "main"
 
-        if git_url.endswith(f"@{git_branch}"):
-            git_url = git_url[: -len(f"@{git_branch}")]
+    if git_url.endswith(f"@{git_branch}"):
+        git_url = git_url[: -len(f"@{git_branch}")]
 
-        return git_url, git_branch
-
-    def __compare_file_contents(self, f1, f2):
-        if f1 is None or f2 is None:
-            return True
-
-        if not (f1.exists() and f2.exists()):
-            return False
-
-        def strip_and_compare(file1, file2):
-            with open(file1, "r") as f1, open(file2, "r") as f2:
-                return f1.read().replace(" ", "").replace("\n", "") == f2.read().replace(" ", "").replace("\n", "")
-
-        return strip_and_compare(f1, f2)
+    return git_url, git_branch
 
 
 def run_command_with_tee(command, target_path):
