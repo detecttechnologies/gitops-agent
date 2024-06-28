@@ -77,7 +77,13 @@ def update_git_repo(
     except GitCommandError as err:
         print(f"Error occurred while updating repository {app_name}: {err}")
         update_status = False
-    git_status = repo.git.status()
-    # Get the hash and date of the latest commit
-    latest_commit = repo.git.log("-1", "--pretty=format:'%h - %s (%an, %ad)'")
+
+    git_status, latest_commit = check_git_status(local_path)
     return update_status, git_status, latest_commit
+
+
+def check_git_status(local_path):
+    repo = Repo(local_path)
+    git_status = repo.git.status()
+    latest_commit = repo.git.log("-1", "--pretty=format:'%h - %s (%an, %ad)'")
+    return git_status, latest_commit

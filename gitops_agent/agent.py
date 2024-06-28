@@ -21,6 +21,7 @@ class GitOpsAgent:
         self.interval = self.config.get("interval", 300)
         self.infra_name = self.config.get("infra_name")
         self.config_mode = config_mode
+        self.first_run = True
 
     def run(self):
         if self.config_mode is True:
@@ -30,12 +31,11 @@ class GitOpsAgent:
         while True:
             for app_name, app_config_url in self.apps.items():
                 app_config_url, app_config_branch = parse_config(app_config_url)
-                updated_config, cfg_git_stats = self.pull_config(app_name, app_config_url, app_config_branch)
-                if updated_config:
-                    app_git_stats, cmd_stats = self.pull_app(app_name, updated_config)
+                to_update, updated_cfg, cfg_git_stats = self.pull_config(app_name, app_config_url, app_config_branch)
+                if to_update:
+                    app_git_stats, cmd_stats = self.pull_app(app_name, updated_cfg)
                 else:
-                    app_git_stats = (True, "Not checked for updates", "NA")
-                    cmd_stats = (True, "Nothing was run")
+                    app_git_stats, cmd_stats = self.check_app(updated_cfg)
                 self.push_status(app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats)
             print(f"Sleeping for {self.interval} seconds...")
             time.sleep(self.interval)
@@ -53,12 +53,16 @@ class GitOpsAgent:
 
         config_changed_at_repo = set(initial_config) - set(final_config)
         code_not_cloned = not final_config["code_local_path"].exists()
+        code_not_at_desired_hash = not compare_git_hashes(
+            final_config["code_local_path"], final_config["code_commit_hash"]
+        )
         config_contents_dont_match = not compare_file_contents(
             final_config["config_dst_path_abs"], final_config["config_src_path_abs"]
         )
-        app_to_be_updated = config_changed_at_repo or code_not_cloned or config_contents_dont_match
-        final_config = False if not app_to_be_updated else final_config
-        return final_config, (ret, status, comm)
+        app_to_be_updated = any(
+            (config_changed_at_repo, code_not_cloned, config_contents_dont_match, code_not_at_desired_hash)
+        )
+        return app_to_be_updated, final_config, (ret, status, comm)
 
     def pull_app(self, app_name, app_config):
         pre_updation_command = app_config["pre_updation_command"]
@@ -87,6 +91,12 @@ class GitOpsAgent:
             print(f"Executing post-update command for {app_name}: {post_updation_command}...")
             cmd_ret["post"], cmd_logs["post"] = run_command_with_tee(post_updation_command, target_path)
         return (ret, status, commit), (cmd_ret, cmd_logs)
+
+    def check_app(self, app_config):
+        target_path = Path(app_config["code_local_path"])
+        status, commit = gops.check_git_status(target_path)
+        cmd_stats = (True, "Nothing was run")
+        return (True, status, commit), cmd_stats
 
     def push_status(self, app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats):
         app_ret, app_status, app_commit = app_git_stats
@@ -123,21 +133,22 @@ class GitOpsAgent:
         feedback_file = Path(f"/opt/gitops-agent/app-configs/{app_name2}/{self.infra_name}.toml")
         if feedback_file.exists():
             with open(feedback_file) as f:
-                try:
-                    feedback = toml.load(f)
-                except toml.decoder.TomlDecodeError:
-                    feedback = {}
+                feedback = toml.load(f)
         else:
-            feedback = {}
+            feedback = {app_name: {"config-updation": {}, "app-updation": {}, "extra-command-output": {}}}
+
+        if cmd_logs == "Nothing was run":
+            current_feedback[app_name]["extra-command-output"] = feedback[app_name]["extra-command-output"]
 
         if (
             app_name in feedback
             and app_name in current_feedback
             and json.dumps(feedback[app_name], sort_keys=True)
             == json.dumps(current_feedback[app_name], sort_keys=True)
+            and not self.first_run
         ):
             print(f"Nothing to update for {app_name}...")
-            return  # Nothing to update
+            return
 
         feedback.update(current_feedback)
 
@@ -161,7 +172,13 @@ class GitOpsAgent:
         repo_commit_mismatching = str(repo.active_branch.commit) != repo_remote_commit
         if repo_commit_mismatching:
             repo.git.push("--set-upstream", "origin", app_config_branch)
+            self.first_run = False
             print(f"Pushed status for {app_name} to file {feedback_file.stem} at branch {app_config_branch}")
+
+
+def compare_git_hashes(repo_path, git_hash):
+    repo = Repo(repo_path)
+    return str(repo.head.commit) == git_hash
 
 
 def compare_file_contents(f1, f2):
