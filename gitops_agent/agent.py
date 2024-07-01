@@ -137,7 +137,8 @@ class GitOpsAgent:
         else:
             feedback = {app_name: {"config-updation": {}, "app-updation": {}, "extra-command-output": {}}}
 
-        if cmd_logs == "Nothing was run":
+        # app_name will not be in feedback if it's the 1st time running for the current app (while it has run for other apps)
+        if cmd_logs == "Nothing was run" and app_name in feedback:
             current_feedback[app_name]["extra-command-output"] = feedback[app_name]["extra-command-output"]
 
         if (
