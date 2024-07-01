@@ -9,6 +9,7 @@ You might ask yourself why such a solution would be needed?
 ![Gitops-agent-1](https://github.com/rsnk96/gitops-agent/assets/10851575/7307e5ff-4c6c-4de8-b057-b543c6f11f72)
 
 If you find yourself in a situation like the below, where you are manually deploying many software applications onto multiple servers, there can be many issues that you frequently encounter:
+
 1. It takes a lot of time to be ssh-ing into deployment devices (production nodes) and manually configuring it. This can be a very serious concern if your production nodes are edge devices with very sparse internet
 2. It's difficult to keep track of the version of applications and configuration present across all production nodes
 3. All the issues mentioned in the [Why Gitops]([url](https://www.gitops.tech/#why-should-i-use-gitops)) section of the Weaveworks blog
@@ -21,7 +22,7 @@ It allows you to run a gitops workflow on classical infrastructure like on-prem 
 
 ![Gitops-agent-2](https://github.com/rsnk96/gitops-agent/assets/10851575/4c3c806d-2dcf-4040-bc17-1601802d6dc8)
 
-The above is a simplified diagram that explains how this program works. It introduces a `gitops-agent` that runs as a systemd service on your ubuntu/debian machine (in reality, any unix device with systemd+python should be able to run this with a bit of tweaking) that enables Devs and Devops folks to focus on working with systems where they are not constrained by prod-device availability, working across a team. It works by 
+The above is a simplified diagram that explains how this program works. It introduces a `gitops-agent` that runs as a systemd service on your ubuntu/debian machine (in reality, any unix device with systemd+python should be able to run this with a bit of tweaking) that enables Devs and Devops folks to focus on working with systems where they are not constrained by prod-device availability, working across a team. It works by
 
 What's more, using simple branch protection rules that are already available on github/gitlab/etc, you can also implement a workflow with the necessary approvals as you so desire, while ensuring a change management system where all changes in production are accounted for!
 
@@ -93,7 +94,7 @@ sudo gitops-agent --configure         ## <Make the changes you want in the edito
 sudo systemctl restart gitops-agent.service
 ```
 
-After you are done, you can check the logs of the agent while its running by running 
+After you are done, you can check the logs of the agent while its running by running
 
 ```sh
 sudo journalctl -n 100 -fu gitops-agent  # Will keep following the logs of the gitops-agent
@@ -102,6 +103,17 @@ sudo journalctl -n 100 -fu gitops-agent  # Will keep following the logs of the g
 ## Troubleshooting
 
 - Please note that this has only been tested on Ubuntu. It is known to not run properly on WSL due to an [issue](https://github.com/gitpython-developers/GitPython/issues/1902) with how GitPython handles WSL paths
+
+### Installing this solution when you have already installed some apps manually
+
+The main steps to keep in mind when installing the gitops-agent mid-lifecycle for any project is:
+
+1. Ensure that `git status` is as clean as possible when installing
+2. Ensure that the apps that have already been cloned have their ownership transferred to `root` user. You can do so by running:
+
+  ```sh
+  sudo chown -R root:root <path-to-already-cloned-app-here>
+  ```
 
 ### Forcing a push to the monitoring branch
 

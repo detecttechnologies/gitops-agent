@@ -2,7 +2,7 @@ infra_name = "xyz"
 interval = 300
 
 [applications]
-    APP1_NAME_HERE = "git@github.com:username/repo1_config.git"
+    APP1_NAME_HERE = "git@github.com:username/repo1_config.git@branch_name"
 
     ## REFERENCE STRUCTURE:
-    # APP_NAME_THAT_MATCHES_NAME_IN_CONFIG_REPO_HERE = "git@github.com:username/config_repo.git"
+    # APP_NAME_THAT_MATCHES_NAME_IN_CONFIG_REPO_HERE = "git@github.com:username/config_repo.git@branch_name"
