@@ -162,7 +162,7 @@ class GitOpsAgent:
         # Dump `feedback` as a toml file at feedback_file path
         with open(feedback_file, "w") as f:
             toml.dump(feedback, f)
-            f.write("\n# You can render the escaped text with https://onlinetexttools.com/unescape-text")
+            f.write("\n# You can render the escaped text with https://onlinetexttools.com/unescape-text\n")
 
         # Add, commit and push the changes
         repo = Repo(f"/opt/gitops-agent/app-configs/{app_name2}")

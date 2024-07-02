@@ -58,28 +58,24 @@ def update_git_repo(
     repo.git.reset("--hard", "HEAD")
 
     try:
-        if checkout_hash:
-            repo.git.checkout(checkout_hash)
+        # Check if the branch exists, create an empty branch if not
+        all_branches = repo.refs
+        branch_present = [e for e in all_branches if git_branch in str(e)]
+
+        if git_branch and create_branch and not branch_present:
+            repo.git.checkout("--orphan", git_branch)
+            files = repo.git.ls_files()
+            if files:
+                repo.git.rm("-rf", ".")
+                # Create an empty commit
+                repo.git.config("user.name", committer_name)
+                repo.git.config("user.email", "<>")
+                repo.git.commit("--allow-empty", "-m", "Initial commit")
         else:
-            if create_branch:
-                # Check if the branch exists
-                all_branches = repo.refs
-                branch_present = [e for e in all_branches if git_branch in str(e)]
-                if branch_present:
-                    repo.git.checkout(git_branch)
-                    repo.git.pull("--rebase", "origin", git_branch)
-                else:
-                    repo.git.checkout("--orphan", git_branch)
-                    files = repo.git.ls_files()
-                    if files:
-                        repo.git.rm("-rf", ".")
-                        # Create an empty commit
-                        repo.git.config("user.name", committer_name)
-                        repo.git.config("user.email", "<>")
-                        repo.git.commit("--allow-empty", "-m", "Initial commit")
-            else:
-                repo.git.checkout(git_branch)
-                repo.git.pull(git_url, git_branch)
+            if git_branch and not checkout_hash:
+                checkout_hash = f"origin/{git_branch}"
+            repo.git.reset("--hard", checkout_hash)
+            repo.git.checkout(checkout_hash.replace("origin/", ""))  # To avoid detaching HEAD from branch
         update_status = True
     except GitCommandError as err:
         print(f"Error occurred while updating repository {app_name}: {err}")
@@ -97,9 +93,9 @@ def check_git_status(local_path):
 
 
 def claim_ownership(dir_path):
-    curr_user = sp.getoutput("whoami")
+    curr_user = sp.run(["whoami"], capture_output=True, text=True).stdout.strip()
     curr_owner = Path(dir_path).owner()
     if Path(dir_path).exists() and curr_owner != curr_user:
-        print(f"Directory {dir_path} exists under user {curr_owner}, claiming ownership of it")
+        print(f"Directory {dir_path} exists under {curr_owner}, claiming ownership of it to be under {curr_user}")
         # Get the current user's username, and then claim ownership recursively of the repo to avoid dubious ownership
-        sp.Popen(["chown", "-R", curr_user, dir_path], stdout=sp.PIPE, stderr=sp.PIPE).communicate()
+        sp.run(["chown", "-R", curr_user, dir_path], check=True)
