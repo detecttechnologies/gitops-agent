@@ -42,10 +42,15 @@ def update_git_repo(
         git_url = git_url[: -len(f"@{git_branch}")]
 
     print(f"Updating repository {app_name}...")
-    if not Path(local_path).exists():
-        repo = Repo.clone_from(git_url, local_path)
-    else:
+    if Path(local_path).exists():
         repo = Repo(local_path)
+        # Find if any partial rebase is in progress in dep_feedback repo, and abort it if so
+        # Partial rebases can occur in case of force-quitting the process mid-execution in a previous run, or
+        # e.g. there being a merge conflict when updating in a previous run
+        if "rebas" in repo.git.status():
+            repo.git.rebase("--abort")
+    else:
+        repo = Repo.clone_from(git_url, local_path)
 
     # Update the local with changes from remote
     repo.git.fetch("--all", "--prune")

@@ -106,14 +106,17 @@ class GitOpsAgent:
         app_ret, app_status, app_commit = app_git_stats
         cfg_ret, cfg_status, cfg_commit = cfg_git_stats
         cmd_ret, cmd_logs = cmd_stats
+
         app_name2 = f"{app_name}-monitoring"
         app_config_branch = f"{app_config_branch}-monitoring"
+        dep_feedback_local_path = f"/opt/gitops-agent/app-configs/{app_name2}"
+
         gops.update_git_repo(
             app_name2,
             app_config_url,
             app_config_branch,
             self.infra_name,
-            f"/opt/gitops-agent/app-configs/{app_name2}",
+            dep_feedback_local_path,
             create_branch=True,
         )
 
@@ -134,7 +137,7 @@ class GitOpsAgent:
             "last-updated": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
         }
 
-        feedback_file = Path(f"/opt/gitops-agent/app-configs/{app_name2}/{self.infra_name}.toml")
+        feedback_file = Path(f"{dep_feedback_local_path}/{self.infra_name}.toml")
         if feedback_file.exists():
             with open(feedback_file) as f:
                 feedback = toml.load(f)
