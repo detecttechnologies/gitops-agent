@@ -12,9 +12,9 @@ If you find yourself in a situation like the below, where you are manually deplo
 
 1. It takes a lot of time to be ssh-ing into deployment devices (production nodes) and manually configuring it. This can be a very serious concern if your production nodes are edge devices with very sparse internet
 2. It's difficult to keep track of the version of applications and configuration present across all production nodes
-3. All the issues mentioned in the [Why Gitops]([url](https://www.gitops.tech/#why-should-i-use-gitops)) section of the Weaveworks blog
+3. All the issues mentioned in the [Why Gitops](https://www.gitops.tech/#why-should-i-use-gitops) section of the Weaveworks blog
 
-This is exactly the type of situation that Gitops was designed to solve. However, most existing gitops solutions like ArgoCD/FluxCD/Spinnaker/etc require you to embrace an entire device & application management solution. This repo aims to enable a much simpler implementation of Gitops.
+This is exactly the type of situation that Gitops was designed to solve. However, most existing gitops solutions like ArgoCD/FluxCD/Spinnaker/etc require you to embrace an entire device & application management solution like Kubernetes. This repo aims to enable a much simpler implementation of Gitops.
 
 It allows you to run a gitops workflow on classical infrastructure like on-prem servers and edge devices, while consuming very little resources, and having very little dependencies. It even has support for observability/monitoring of the gitops workflow with no dependency except Git!
 
@@ -47,7 +47,7 @@ and not any of the other features that other Gitops solutions have (covered in t
 ### 1.3 Differences from other implementations of gitops
 
 - This tool focuses largely on application and configuration management, and not on infrastructure setup as generally with other Gitops tools.
-- It isn't necessary to use docker containers with this tool, as is with most other Gitops tools. This is because a lot of lower-level applications may not run on docker. However, if a user would like to run something on a docker-container, they can always make use of the `pre_updation_command` and `post_updation_command` flags to run any custom commands, including pulling/building new docker images, etc.
+- It isn't necessary to use docker containers with this tool, as is with most other Gitops tools. This is because a lot of lower-level applications may not run on docker. However, if you would like to run something on a docker-container, you can always make use of the `pre_updation_command` and `post_updation_command` flags available with this tool to run any custom commands, including pulling/building new docker images, etc.
 - This tool is called as an "agent", and not as an "operator" as is traditional k8s speak because in conventional infrastructure like physical servers, any client in a client-server architecture is generally called an "agent".
 
 ## 2. Usage
@@ -66,11 +66,11 @@ and not any of the other features that other Gitops solutions have (covered in t
 Configure your online git repo -
 
 - Application Git Repos:
-  - Ensure that your app-configuration git repository allows pushes from unverified users. On Gitlab, this option might be enabled by default, and you have to disable it manually for your app-configuration repository. To do so on Gitlab, you can go to Repository Settings --> Repository --> Push rules --> Disable `Reject unverified users`
   - Add your debian root user's ssh-public key as a `Deploy Key` on your git repo
 - Deployment Configuration Git Repo:
   - Ensure that there is a folder with the exact same name that you are nick-named for your prod-device, and there's a `infra_meta.toml` file within that folder describing the applications that you would like to monitor with this gitops-agent. Additionally, if you have any configuration files, you can also host them here.
   - Add your debian root user's ssh-public key as a `Deploy Key` on your git repo **with write access to this repo** (needs to write-back the feedback)
+  - Ensure that your app-configuration git repository allows pushes from unverified users. On Gitlab, this option might be enabled by default, and you have to disable it manually for your app-configuration repository. To do so on Gitlab, you can go to Repository Settings --> Repository --> Push rules --> Disable `Reject unverified users`
   - Employ any approval workflows you would like by restricting who can push/approve changes to the branch that will be used as the branch for the gitops workflow
 
 ### 2.3 Agent Installation on Prod-Device
@@ -109,11 +109,6 @@ sudo journalctl -n 100 -fu gitops-agent  # Will keep following the logs of the g
 The main steps to keep in mind when installing the gitops-agent mid-lifecycle for any project is:
 
 1. Ensure that `git status` is as clean as possible when installing
-2. Ensure that the apps that have already been cloned have their ownership transferred to `root` user. You can do so by running:
-
-  ```sh
-  sudo chown -R root:root <path-to-already-cloned-app-here>
-  ```
 
 ### Forcing a push to the monitoring branch
 

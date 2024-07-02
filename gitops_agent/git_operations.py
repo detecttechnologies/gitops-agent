@@ -1,9 +1,10 @@
+import subprocess as sp
 import toml
 from pathlib import Path
 from git import Repo, GitCommandError
 
 
-def check_commit_of_this_infra(app_name, infra_name):
+def check_deployment_config(app_name, infra_name):
     infra_meta_file = Path(f"/opt/gitops-agent/app-configs/{app_name}/{infra_name}/infra_meta.toml")
     if not infra_meta_file.parent.parent.exists():
         print(infra_meta_file.parent.parent, " does not yet exist")
@@ -87,3 +88,12 @@ def check_git_status(local_path):
     git_status = repo.git.status()
     latest_commit = repo.git.log("-1", "--pretty=format:'%h - %s (%an, %ad)'")
     return git_status, latest_commit
+
+
+def claim_ownership(dir_path):
+    curr_user = sp.getoutput("whoami")
+    curr_owner = Path(dir_path).owner()
+    if Path(dir_path).exists() and curr_owner != curr_user:
+        print(f"Directory {dir_path} exists under user {curr_owner}, claiming ownership of it")
+        # Get the current user's username, and then claim ownership recursively of the repo to avoid dubious ownership
+        sp.Popen(["chown", "-R", curr_user, dir_path], stdout=sp.PIPE, stderr=sp.PIPE).communicate()

@@ -30,8 +30,9 @@ class GitOpsAgent:
             return
         while True:
             for app_name, app_config_url in self.apps.items():
+                # First check the deployment config, and then update the apps if required
                 app_config_url, app_config_branch = parse_config(app_config_url)
-                to_update, updated_cfg, cfg_git_stats = self.pull_config(app_name, app_config_url, app_config_branch)
+                to_update, updated_cfg, cfg_git_stats = self.pull_dep_cfg(app_name, app_config_url, app_config_branch)
                 if to_update:
                     app_git_stats, cmd_stats = self.pull_app(app_name, updated_cfg)
                 else:
@@ -40,16 +41,19 @@ class GitOpsAgent:
             print(f"Sleeping for {self.interval} seconds...")
             time.sleep(self.interval)
 
-    def pull_config(self, app_name, app_config_url, app_config_branch):
-        initial_config = gops.check_commit_of_this_infra(app_name, self.infra_name)
+    def pull_dep_cfg(self, app_name, app_config_url, app_config_branch):
+        initial_config = gops.check_deployment_config(app_name, self.infra_name)
+        dep_cfg_local_path = f"/opt/gitops-agent/app-configs/{app_name}"
+        gops.claim_ownership(dep_cfg_local_path)
         ret, status, comm = gops.update_git_repo(
             f"{app_name}-config",
             app_config_url,
             app_config_branch,
             self.infra_name,
-            f"/opt/gitops-agent/app-configs/{app_name}",
+            dep_cfg_local_path,
         )
-        final_config = gops.check_commit_of_this_infra(app_name, self.infra_name)
+        final_config = gops.check_deployment_config(app_name, self.infra_name)
+        gops.claim_ownership(final_config["code_local_path"])
 
         config_changed_at_repo = set(initial_config) - set(final_config)
         code_not_cloned = not final_config["code_local_path"].exists()
