@@ -44,7 +44,6 @@ class GitOpsAgent:
     def pull_dep_cfg(self, app_name, app_config_url, app_config_branch):
         initial_config = gops.check_deployment_config(app_name, self.infra_name)
         dep_cfg_local_path = f"/opt/gitops-agent/app-configs/{app_name}"
-        gops.claim_ownership(dep_cfg_local_path)
         ret, status, comm = gops.update_git_repo(
             f"{app_name}-config",
             app_config_url,

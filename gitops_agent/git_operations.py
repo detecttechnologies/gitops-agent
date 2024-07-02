@@ -44,10 +44,11 @@ def update_git_repo(
     print(f"Updating repository {app_name}...")
     if Path(local_path).exists():
         repo = Repo(local_path)
+        claim_ownership(local_path)
         # Find if any partial rebase is in progress in dep_feedback repo, and abort it if so
         # Partial rebases can occur in case of force-quitting the process mid-execution in a previous run, or
         # e.g. there being a merge conflict when updating in a previous run
-        if "rebas" in repo.git.status():
+        if "rebas" in repo.git.status():  # Pick up both "rebase" and  "rebasing" in git status
             repo.git.rebase("--abort")
     else:
         repo = Repo.clone_from(git_url, local_path)
