@@ -184,8 +184,10 @@ class GitOpsAgent:
 
 
 def compare_git_hashes(repo_path, git_hash):
-    repo = Repo(repo_path)
-    return str(repo.head.commit) == git_hash
+    if Path(repo_path).exists():
+        repo = Repo(repo_path)
+        return str(repo.head.commit) == git_hash
+    return False
 
 
 def compare_file_contents(f1, f2):

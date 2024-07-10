@@ -121,7 +121,9 @@ sudo systemctl restart gitops-agent
 
 ## To-Do
 
+- Improve the feedback / monitoring branch to quickly highlight if everything is alright, or if there's any issue
 - Add app-deletion functionality, e.g. if section is removed in configuration after it was initially added
+- Keep commit history trimmed to a fixed period in the monitoring branch, to avoid bloat
 - Push the status back only after all apps have been updated, rather than doing it for all individual apps
 - Sample Gitlab/Github pipelines for validating updates to the config repo
 

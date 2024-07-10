@@ -4,7 +4,7 @@
 
 [project]
     name = "gitops-agent"
-    version = "0.1.4"
+    version = "1.0.0"
     description = "A GitOps agent for managing software code and configs on non-k8s servers"
     readme = "README.md"
     requires-python = ">=3.6"

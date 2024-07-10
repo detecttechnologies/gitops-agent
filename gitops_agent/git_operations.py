@@ -93,9 +93,10 @@ def check_git_status(local_path):
 
 
 def claim_ownership(dir_path):
-    curr_user = sp.run(["whoami"], capture_output=True, text=True).stdout.strip()
-    curr_owner = Path(dir_path).owner()
-    if Path(dir_path).exists() and curr_owner != curr_user:
-        print(f"Directory {dir_path} exists under {curr_owner}, claiming ownership of it to be under {curr_user}")
-        # Get the current user's username, and then claim ownership recursively of the repo to avoid dubious ownership
-        sp.run(["chown", "-R", curr_user, dir_path], check=True)
+    if Path(dir_path).exists():
+        curr_user = sp.run(["whoami"], capture_output=True, text=True).stdout.strip()
+        curr_owner = Path(dir_path).owner()
+        if curr_owner != curr_user:
+            print(f"Directory {dir_path} exists under {curr_owner}, claiming ownership of it to be under {curr_user}")
+            # Get the current user's username, and then claim ownership recursively of the repo to avoid dubious ownership
+            sp.run(["chown", "-R", curr_user, dir_path], check=True)
