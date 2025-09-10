@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define GitHub repository details
-REPO="rsnk96/gitops-agent"
+REPO="detecttechnologies/gitops-agent"
 BRANCH="main"  # Adjust branch name as necessary
 
 # Step 1: Install the Python package from GitHub

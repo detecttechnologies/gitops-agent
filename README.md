@@ -1,12 +1,12 @@
 # GitOps Agent
 
-This is a Python-based tool that continuously monitors remote Git repositories for changes and performs actions based on those changes. It started as a simple git-repo watcher in [CVG, IITM](https://github.com/iitmcvg). However, it has evolved into a Gitops-enablement tool to help manage applications and their configurations on on-premise servers / classical & conventional infrastructure / VMs / etc without the need for Kubernetes.
+This is a Python-based tool that continuously monitors remote Git repositories for changes and performs actions based on those changes. It started as a simple git-repo watcher in [CVG, CFI, IITM](https://github.com/iitmcvg). However, it has evolved into a Gitops-enablement tool to help manage applications and their configurations on on-premise servers / classical & conventional infrastructure / VMs / etc without the need for Kubernetes.
 
 ## 1. Why
 
 You might ask yourself why such a solution would be needed?
 
-![Gitops-agent-1](https://github.com/rsnk96/gitops-agent/assets/10851575/7307e5ff-4c6c-4de8-b057-b543c6f11f72)
+![Gitops-agent-1](https://github.com/detecttechnologies/gitops-agent/assets/10851575/7307e5ff-4c6c-4de8-b057-b543c6f11f72)
 
 If you find yourself in a situation like the below, where you are manually deploying many software applications onto multiple servers, there can be many issues that you frequently encounter:
 
@@ -20,7 +20,7 @@ It allows you to run a gitops workflow on classical infrastructure like on-prem 
 
 ### 1.1 How does this work?
 
-![Gitops-agent-2](https://github.com/rsnk96/gitops-agent/assets/10851575/4c3c806d-2dcf-4040-bc17-1601802d6dc8)
+![Gitops-agent-2](https://github.com/detecttechnologies/gitops-agent/assets/10851575/4c3c806d-2dcf-4040-bc17-1601802d6dc8)
 
 The above is a simplified diagram that explains how this program works. It introduces a `gitops-agent` that runs as a systemd service on your ubuntu/debian machine (in reality, any unix device with systemd+python should be able to run this with a bit of tweaking) that enables Devs and Devops folks to focus on working with systems where they are not constrained by prod-device availability, working across a team. It works by
 
@@ -28,7 +28,7 @@ What's more, using simple branch protection rules that are already available on 
 
 Extending the above workflow to multiple applications and prod devices, it would look like the below:
 
-![Gitops-agent-3](https://github.com/rsnk96/gitops-agent/assets/10851575/57a19c80-a77e-4402-80a0-f68841db86f6)
+![Gitops-agent-3](https://github.com/detecttechnologies/gitops-agent/assets/10851575/57a19c80-a77e-4402-80a0-f68841db86f6)
 
 ### 1.2 Is this for me?
 

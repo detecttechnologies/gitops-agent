@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 Restart=on-failure
 Environment=PYTHONUNBUFFERED=1
-ExecStartPre=python3 -m pip install --upgrade --force-reinstall --break-system-packages --no-deps git+https://github.com/rsnk96/gitops-agent
+ExecStartPre=python3 -m pip install --upgrade --force-reinstall --break-system-packages --no-deps git+https://github.com/detecttechnologies/gitops-agent
 ExecStart=gitops-agent
 
 [Install]
