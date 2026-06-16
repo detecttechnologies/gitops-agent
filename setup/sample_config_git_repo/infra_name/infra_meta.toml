@@ -11,16 +11,16 @@
     #
     #     # OPTIONAL: copy one or more config files into place after the code is updated.
     #     # `src` is RELATIVE to this deployment-config repo's root; `dst` is an ABSOLUTE path.
+    #     # Destination parent dirs are created automatically; an entry whose `src` is missing is
+    #     # skipped (with a log) instead of aborting the run.
     #     config_files = [
     #         { src = "infra_name/config.toml", dst = "/mnt/abc/def/config.toml" },
     #         { src = "infra_name/secrets.env", dst = "/mnt/abc/def/.env" },
     #     ]
     #
-    #     # LEGACY (still supported, backward compatible): the single-file keys below are treated as
-    #     # one additional entry. If both `config_files` and these keys are present, all are applied:
-    #     # `config_files` entries are copied first and this legacy pair is copied last.
-    #     config_src_path_rel_in_this_repo = "OPTIONAL, Ex: infra_name/config.toml, should be relative to this repo's root"
-    #     config_dst_path_abs = "OPTIONAL, Ex: /mnt/abc/def/config.toml, should be absolute path"
+    #     # NOTE: the old single-file keys `config_src_path_rel_in_this_repo` and
+    #     # `config_dst_path_abs` are NO LONGER SUPPORTED. If either is present the agent will raise
+    #     # an error asking you to migrate to the `config_files` array above.
     #
     #     pre_updation_command = "OPTIONAL, Ex: git stash"
     #     post_updation_command = "OPTIONAL, Ex: docker restart xyz; git stash pop"

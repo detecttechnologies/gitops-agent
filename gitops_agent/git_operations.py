@@ -1,35 +1,57 @@
+import os
 import subprocess as sp
 import toml
 from pathlib import Path
 from git import Repo, GitCommandError
 
+# Root under which all per-app config checkouts live. Resolved from the
+# GITOPS_AGENT_HOME env var so tests can point it at a tmp dir; defaults to the
+# production location so on-prod behavior is unchanged.
+APP_CONFIGS_DIR = Path(os.environ.get("GITOPS_AGENT_HOME", "/opt/gitops-agent")) / "app-configs"
+
+
+# The single-file keys from the old schema. They are no longer supported: if either is present
+# in an app's section, the agent refuses to run and asks the user to migrate to ``config_files``.
+LEGACY_CONFIG_KEYS = ("config_src_path_rel_in_this_repo", "config_dst_path_abs")
+
 
 def resolve_config_file_pairs(app_meta, repo_root):
     """Normalize an app's config-file definitions into a list of resolved src/dst path pairs.
 
-    Pure path-resolution helper (no I/O). Supports two schemas:
+    Pure path-resolution helper (no I/O). The only supported schema is an array of inline tables
+    under ``config_files``, each with ``src`` (relative to the deployment-config repo root) and
+    ``dst`` (absolute path).
 
-    - New: an array of inline tables under ``config_files``, each with ``src`` (relative to the
-      deployment-config repo root) and ``dst`` (absolute path).
-    - Legacy (backward compat): the single-file keys ``config_src_path_rel_in_this_repo`` +
-      ``config_dst_path_abs``, treated as one entry.
-
-    Ordering: if both forms are present, the new ``config_files`` entries come first and the legacy
-    single-pair entry is appended last (all are returned; nothing is dropped or de-duplicated). If
-    neither is present, an empty list is returned (no config files to copy).
+    The old single-file keys ``config_src_path_rel_in_this_repo`` / ``config_dst_path_abs`` are no
+    longer supported. If EITHER is present a ValueError is raised naming the offending key(s) and
+    telling the user to migrate to ``config_files`` -- the agent fails loud rather than silently
+    ignoring them. If ``config_files`` is absent (and no legacy keys are present), an empty list is
+    returned (no config files to copy).
 
     Args:
         app_meta (dict): The app's section parsed from infra_meta.toml.
         repo_root (Path): The app's config checkout directory
-            (/opt/gitops-agent/app-configs/{app_name}/), against which relative ``src`` paths are
+            ({GITOPS_AGENT_HOME}/app-configs/{app_name}/, by default
+            /opt/gitops-agent/app-configs/{app_name}/), against which relative ``src`` paths are
             resolved (hence the leading infra-name segment in ``src`` examples).
 
     Returns:
         list[dict]: Each dict has ``src_abs`` (Path) and ``dst_abs`` (Path).
+
+    Raises:
+        ValueError: If any of the removed legacy single-file keys are present.
     """
+    offending = [key for key in LEGACY_CONFIG_KEYS if key in app_meta]
+    if offending:
+        raise ValueError(
+            "The legacy config keys "
+            + ", ".join(offending)
+            + " are no longer supported. Migrate them to the `config_files` array, e.g. "
+            + 'config_files = [{ src = "infra_name/config.toml", dst = "/abs/path/config.toml" }]'
+        )
+
     repo_root = Path(repo_root)
     pairs = []
-
     for entry in app_meta.get("config_files", []):
         pairs.append(
             {
@@ -38,19 +60,11 @@ def resolve_config_file_pairs(app_meta, repo_root):
             }
         )
 
-    if "config_src_path_rel_in_this_repo" in app_meta and "config_dst_path_abs" in app_meta:
-        pairs.append(
-            {
-                "src_abs": Path(repo_root, app_meta["config_src_path_rel_in_this_repo"]),
-                "dst_abs": Path(app_meta["config_dst_path_abs"]),
-            }
-        )
-
     return pairs
 
 
 def check_deployment_config(app_name, infra_name):
-    infra_meta_file = Path(f"/opt/gitops-agent/app-configs/{app_name}/{infra_name}/infra_meta.toml")
+    infra_meta_file = Path(APP_CONFIGS_DIR, app_name, infra_name, "infra_meta.toml")
     if not infra_meta_file.parent.parent.exists():
         print(infra_meta_file.parent.parent, " does not yet exist")
         return {}  # The config directory hasn't been cloned yet, so let the config be cloned
@@ -68,7 +82,7 @@ def check_deployment_config(app_name, infra_name):
     curr_app_config["pre_updation_command"] = app_meta.get("pre_updation_command", None)
     curr_app_config["post_updation_command"] = app_meta.get("post_updation_command", None)
 
-    repo_root = Path(f"/opt/gitops-agent/app-configs/{app_name}/")
+    repo_root = Path(APP_CONFIGS_DIR, app_name)
     curr_app_config["config_file_pairs"] = resolve_config_file_pairs(app_meta, repo_root)
 
     return curr_app_config

@@ -129,18 +129,17 @@ aborting the run:
     ]
 ```
 
-**Backward compatibility:** the older single-file keys are still supported and behave exactly as
-before:
+**Removed (old format is now rejected):** the older single-file keys
 
 ```toml
-    config_src_path_rel_in_this_repo = "infra_name/config.toml"  # relative to repo root
-    config_dst_path_abs = "/opt/my-app/config.toml"              # absolute path
+    config_src_path_rel_in_this_repo = "infra_name/config.toml"  # NO LONGER SUPPORTED
+    config_dst_path_abs = "/opt/my-app/config.toml"              # NO LONGER SUPPORTED
 ```
 
-If both `config_files` and the legacy single-pair keys are present, all of them are applied: the
-`config_files` entries are copied first and the legacy pair is copied last as an additional file (so
-if two entries share the same `dst`, the legacy pair wins). If neither is present, no config files
-are copied.
+are no longer supported. If either key is present in an app's section, the agent raises a clear
+error naming the offending key(s) and tells you to migrate them into the `config_files` array above.
+There is no backward compatibility and no silent fallback. If neither `config_files` nor the legacy
+keys are present, no config files are copied.
 
 Optional `pre_updation_command` / `post_updation_command` strings can also be set per app to run
 shell commands before/after the update.
