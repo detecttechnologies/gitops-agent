@@ -8,6 +8,8 @@ Pure path-resolution tests, no I/O. Run standalone with:
 import sys
 from pathlib import Path
 
+import pytest
+
 # Make the package importable when running the file standalone.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -46,39 +48,43 @@ def test_new_array_form():
     ]
 
 
-def test_legacy_single_pair_form():
+def test_legacy_src_key_alone_raises():
+    app_meta = {"config_src_path_rel_in_this_repo": "infra_name/config.toml"}
+    with pytest.raises(ValueError) as exc:
+        resolve_config_file_pairs(app_meta, REPO_ROOT)
+    assert "config_src_path_rel_in_this_repo" in str(exc.value)
+    assert "config_files" in str(exc.value)
+
+
+def test_legacy_dst_key_alone_raises():
+    app_meta = {"config_dst_path_abs": "/opt/app/config.toml"}
+    with pytest.raises(ValueError) as exc:
+        resolve_config_file_pairs(app_meta, REPO_ROOT)
+    assert "config_dst_path_abs" in str(exc.value)
+    assert "config_files" in str(exc.value)
+
+
+def test_both_legacy_keys_raise_naming_both():
     app_meta = {
         "config_src_path_rel_in_this_repo": "infra_name/config.toml",
         "config_dst_path_abs": "/opt/app/config.toml",
     }
-    pairs = resolve_config_file_pairs(app_meta, REPO_ROOT)
-    assert pairs == [
-        {
-            "src_abs": REPO_ROOT / "infra_name/config.toml",
-            "dst_abs": Path("/opt/app/config.toml"),
-        }
-    ]
+    with pytest.raises(ValueError) as exc:
+        resolve_config_file_pairs(app_meta, REPO_ROOT)
+    msg = str(exc.value)
+    assert "config_src_path_rel_in_this_repo" in msg
+    assert "config_dst_path_abs" in msg
 
 
-def test_both_present_new_first_legacy_appended():
+def test_legacy_key_alongside_config_files_still_raises():
+    # Even when the new array is present, any legacy key must hard-fail (no merging).
     app_meta = {
-        "config_files": [
-            {"src": "Tricon-01/a.toml", "dst": "/opt/app/a.toml"},
-        ],
+        "config_files": [{"src": "Tricon-01/a.toml", "dst": "/opt/app/a.toml"}],
         "config_src_path_rel_in_this_repo": "legacy/old.toml",
         "config_dst_path_abs": "/opt/app/old.toml",
     }
-    pairs = resolve_config_file_pairs(app_meta, REPO_ROOT)
-    assert pairs == [
-        {
-            "src_abs": REPO_ROOT / "Tricon-01/a.toml",
-            "dst_abs": Path("/opt/app/a.toml"),
-        },
-        {
-            "src_abs": REPO_ROOT / "legacy/old.toml",
-            "dst_abs": Path("/opt/app/old.toml"),
-        },
-    ]
+    with pytest.raises(ValueError):
+        resolve_config_file_pairs(app_meta, REPO_ROOT)
 
 
 def test_neither_present_returns_empty_list():
