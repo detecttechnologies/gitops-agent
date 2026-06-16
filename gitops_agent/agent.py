@@ -59,9 +59,12 @@ class GitOpsAgent:
         code_not_at_desired_hash = not compare_git_hashes(
             final_config["code_local_path"], final_config["code_commit_hash"]
         )
+        # Only consider pairs whose source exists. A missing source is skipped at copy time
+        # (see pull_app), so flagging it as drift here would cause a perpetual update loop.
         config_contents_dont_match = any(
             not compare_file_contents(pair["dst_abs"], pair["src_abs"])
             for pair in final_config["config_file_pairs"]
+            if pair["src_abs"].exists()
         )
         app_to_be_updated = any(
             (config_changed_at_repo, code_not_cloned, config_contents_dont_match, code_not_at_desired_hash)

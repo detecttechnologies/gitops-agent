@@ -17,8 +17,8 @@
     #     ]
     #
     #     # LEGACY (still supported, backward compatible): the single-file keys below are treated as
-    #     # one additional entry. If both `config_files` and these keys are present, `config_files`
-    #     # entries take precedence (come first) and this legacy pair is appended.
+    #     # one additional entry. If both `config_files` and these keys are present, all are applied:
+    #     # `config_files` entries are copied first and this legacy pair is copied last.
     #     config_src_path_rel_in_this_repo = "OPTIONAL, Ex: infra_name/config.toml, should be relative to this repo's root"
     #     config_dst_path_abs = "OPTIONAL, Ex: /mnt/abc/def/config.toml, should be absolute path"
     #

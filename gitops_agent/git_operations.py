@@ -14,15 +14,15 @@ def resolve_config_file_pairs(app_meta, repo_root):
     - Legacy (backward compat): the single-file keys ``config_src_path_rel_in_this_repo`` +
       ``config_dst_path_abs``, treated as one entry.
 
-    Precedence: if both forms are present, the new ``config_files`` entries come first, followed by
-    the legacy single-pair entry (legacy is appended/merged, not dropped). If neither is present,
-    an empty list is returned (no config files to copy).
+    Ordering: if both forms are present, the new ``config_files`` entries come first and the legacy
+    single-pair entry is appended last (all are returned; nothing is dropped or de-duplicated). If
+    neither is present, an empty list is returned (no config files to copy).
 
     Args:
         app_meta (dict): The app's section parsed from infra_meta.toml.
-        repo_root (Path): The deployment-config repo root (e.g.
-            /opt/gitops-agent/app-configs/{app_name}/), against which relative ``src`` paths are
-            resolved.
+        repo_root (Path): The app's config checkout directory
+            (/opt/gitops-agent/app-configs/{app_name}/), against which relative ``src`` paths are
+            resolved (hence the leading infra-name segment in ``src`` examples).
 
     Returns:
         list[dict]: Each dict has ``src_abs`` (Path) and ``dst_abs`` (Path).

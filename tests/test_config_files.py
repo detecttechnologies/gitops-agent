@@ -12,8 +12,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from gitops_agent.git_operations import resolve_config_file_pairs  # noqa: E402
+from gitops_agent.agent import compare_file_contents  # noqa: E402
 
 REPO_ROOT = Path("/opt/gitops-agent/app-configs/my_app/")
+
+
+def _config_drift(pairs):
+    """Replicate the drift predicate used in GitOpsAgent.pull_dep_cfg."""
+    return any(
+        not compare_file_contents(pair["dst_abs"], pair["src_abs"])
+        for pair in pairs
+        if pair["src_abs"].exists()
+    )
 
 
 def test_new_array_form():
@@ -93,6 +103,51 @@ def test_repo_root_accepts_str():
     app_meta = {"config_files": [{"src": "a.toml", "dst": "/opt/a.toml"}]}
     pairs = resolve_config_file_pairs(app_meta, "/opt/gitops-agent/app-configs/my_app/")
     assert pairs[0]["src_abs"] == Path("/opt/gitops-agent/app-configs/my_app/a.toml")
+
+
+def test_drift_ignores_pairs_with_missing_source(tmp_path):
+    # A pair whose src does not exist is skipped at copy time, so it must NOT be
+    # reported as drift (otherwise the app would be flagged for update forever).
+    missing_src = tmp_path / "does_not_exist.toml"
+    some_dst = tmp_path / "dst.toml"
+    some_dst.write_text("anything")
+    pairs = [{"src_abs": missing_src, "dst_abs": some_dst}]
+    assert _config_drift(pairs) is False
+
+
+def test_drift_true_when_existing_source_differs_from_dst(tmp_path):
+    src = tmp_path / "src.toml"
+    dst = tmp_path / "dst.toml"
+    src.write_text("a = 1")
+    dst.write_text("a = 2")
+    pairs = [{"src_abs": src, "dst_abs": dst}]
+    assert _config_drift(pairs) is True
+
+
+def test_drift_false_when_all_existing_sources_match(tmp_path):
+    src = tmp_path / "src.toml"
+    dst = tmp_path / "dst.toml"
+    src.write_text("a = 1")
+    dst.write_text("a = 1")
+    pairs = [{"src_abs": src, "dst_abs": dst}]
+    assert _config_drift(pairs) is False
+
+
+def test_drift_true_when_any_one_of_many_differs(tmp_path):
+    src1, dst1 = tmp_path / "s1", tmp_path / "d1"
+    src2, dst2 = tmp_path / "s2", tmp_path / "d2"
+    for p in (src1, dst1, src2):
+        p.write_text("same")
+    dst2.write_text("different")
+    pairs = [
+        {"src_abs": src1, "dst_abs": dst1},
+        {"src_abs": src2, "dst_abs": dst2},
+    ]
+    assert _config_drift(pairs) is True
+
+
+def test_drift_false_for_empty_pairs():
+    assert _config_drift([]) is False
 
 
 if __name__ == "__main__":

@@ -137,9 +137,10 @@ before:
     config_dst_path_abs = "/opt/my-app/config.toml"              # absolute path
 ```
 
-If both `config_files` and the legacy single-pair keys are present, the `config_files` entries take
-precedence (are applied first) and the legacy pair is appended as an additional file. If neither is
-present, no config files are copied.
+If both `config_files` and the legacy single-pair keys are present, all of them are applied: the
+`config_files` entries are copied first and the legacy pair is copied last as an additional file (so
+if two entries share the same `dst`, the legacy pair wins). If neither is present, no config files
+are copied.
 
 Optional `pre_updation_command` / `post_updation_command` strings can also be set per app to run
 shell commands before/after the update.
