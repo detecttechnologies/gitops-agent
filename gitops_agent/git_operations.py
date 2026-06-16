@@ -4,6 +4,51 @@ from pathlib import Path
 from git import Repo, GitCommandError
 
 
+def resolve_config_file_pairs(app_meta, repo_root):
+    """Normalize an app's config-file definitions into a list of resolved src/dst path pairs.
+
+    Pure path-resolution helper (no I/O). Supports two schemas:
+
+    - New: an array of inline tables under ``config_files``, each with ``src`` (relative to the
+      deployment-config repo root) and ``dst`` (absolute path).
+    - Legacy (backward compat): the single-file keys ``config_src_path_rel_in_this_repo`` +
+      ``config_dst_path_abs``, treated as one entry.
+
+    Precedence: if both forms are present, the new ``config_files`` entries come first, followed by
+    the legacy single-pair entry (legacy is appended/merged, not dropped). If neither is present,
+    an empty list is returned (no config files to copy).
+
+    Args:
+        app_meta (dict): The app's section parsed from infra_meta.toml.
+        repo_root (Path): The deployment-config repo root (e.g.
+            /opt/gitops-agent/app-configs/{app_name}/), against which relative ``src`` paths are
+            resolved.
+
+    Returns:
+        list[dict]: Each dict has ``src_abs`` (Path) and ``dst_abs`` (Path).
+    """
+    repo_root = Path(repo_root)
+    pairs = []
+
+    for entry in app_meta.get("config_files", []):
+        pairs.append(
+            {
+                "src_abs": Path(repo_root, entry["src"]),
+                "dst_abs": Path(entry["dst"]),
+            }
+        )
+
+    if "config_src_path_rel_in_this_repo" in app_meta and "config_dst_path_abs" in app_meta:
+        pairs.append(
+            {
+                "src_abs": Path(repo_root, app_meta["config_src_path_rel_in_this_repo"]),
+                "dst_abs": Path(app_meta["config_dst_path_abs"]),
+            }
+        )
+
+    return pairs
+
+
 def check_deployment_config(app_name, infra_name):
     infra_meta_file = Path(f"/opt/gitops-agent/app-configs/{app_name}/{infra_name}/infra_meta.toml")
     if not infra_meta_file.parent.parent.exists():
@@ -23,14 +68,8 @@ def check_deployment_config(app_name, infra_name):
     curr_app_config["pre_updation_command"] = app_meta.get("pre_updation_command", None)
     curr_app_config["post_updation_command"] = app_meta.get("post_updation_command", None)
 
-    if "config_src_path_rel_in_this_repo" in app_meta and "config_dst_path_abs" in app_meta:
-        curr_app_config["config_dst_path_abs"] = Path(app_meta["config_dst_path_abs"])
-        curr_app_config["config_src_path_abs"] = Path(
-            f"/opt/gitops-agent/app-configs/{app_name}/",
-            app_meta["config_src_path_rel_in_this_repo"],
-        )
-    else:
-        curr_app_config["config_dst_path_abs"] = curr_app_config["config_src_path_abs"] = None
+    repo_root = Path(f"/opt/gitops-agent/app-configs/{app_name}/")
+    curr_app_config["config_file_pairs"] = resolve_config_file_pairs(app_meta, repo_root)
 
     return curr_app_config
 

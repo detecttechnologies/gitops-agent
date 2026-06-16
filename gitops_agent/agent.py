@@ -59,8 +59,9 @@ class GitOpsAgent:
         code_not_at_desired_hash = not compare_git_hashes(
             final_config["code_local_path"], final_config["code_commit_hash"]
         )
-        config_contents_dont_match = not compare_file_contents(
-            final_config["config_dst_path_abs"], final_config["config_src_path_abs"]
+        config_contents_dont_match = any(
+            not compare_file_contents(pair["dst_abs"], pair["src_abs"])
+            for pair in final_config["config_file_pairs"]
         )
         app_to_be_updated = any(
             (config_changed_at_repo, code_not_cloned, config_contents_dont_match, code_not_at_desired_hash)
@@ -86,9 +87,14 @@ class GitOpsAgent:
             target_path,
             checkout_hash=app_config["code_commit_hash"],
         )
-        # copy config file to code folder
-        if app_config["config_src_path_abs"] and app_config["config_dst_path_abs"]:
-            shutil.copy2(app_config["config_src_path_abs"], app_config["config_dst_path_abs"])
+        # copy each config file to its destination
+        for pair in app_config["config_file_pairs"]:
+            src_abs, dst_abs = pair["src_abs"], pair["dst_abs"]
+            if not src_abs.exists():
+                print(f"Skipping config copy for {app_name}: source {src_abs} does not exist")
+                continue
+            Path(dst_abs).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_abs, dst_abs)
 
         if post_updation_command:
             print(f"Executing post-update command for {app_name}: {post_updation_command}...")

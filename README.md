@@ -100,6 +100,50 @@ After you are done, you can check the logs of the agent while its running by run
 sudo journalctl -n 100 -fu gitops-agent  # Will keep following the logs of the gitops-agent
 ```
 
+### 2.5 Deployment Config Schema (`infra_meta.toml`)
+
+Each application is described as a section in the `{infra_name}/infra_meta.toml` file of your
+deployment-config repo. A minimal section looks like:
+
+```toml
+[my_app]
+    code_url = "git@github.com:org/my-app.git"
+    code_commit_hash = "abc123..."
+    code_local_path = "/opt/my-app"
+```
+
+To copy one or more configuration files into place after the code is updated, use the
+`config_files` array of inline tables. Here `src` is **relative to your deployment-config repo's
+root**, and `dst` is an **absolute path** on the prod-device. Destination parent directories are
+created automatically, and any entry whose `src` is missing is skipped (with a log) rather than
+aborting the run:
+
+```toml
+[my_app]
+    code_url = "git@github.com:org/my-app.git"
+    code_commit_hash = "abc123..."
+    code_local_path = "/opt/my-app"
+    config_files = [
+        { src = "infra_name/config.toml", dst = "/opt/my-app/config.toml" },
+        { src = "infra_name/secrets.env", dst = "/opt/my-app/.env" },
+    ]
+```
+
+**Backward compatibility:** the older single-file keys are still supported and behave exactly as
+before:
+
+```toml
+    config_src_path_rel_in_this_repo = "infra_name/config.toml"  # relative to repo root
+    config_dst_path_abs = "/opt/my-app/config.toml"              # absolute path
+```
+
+If both `config_files` and the legacy single-pair keys are present, the `config_files` entries take
+precedence (are applied first) and the legacy pair is appended as an additional file. If neither is
+present, no config files are copied.
+
+Optional `pre_updation_command` / `post_updation_command` strings can also be set per app to run
+shell commands before/after the update.
+
 ## Troubleshooting
 
 - Please note that this has only been tested on Ubuntu. It is known to not run properly on WSL due to an [issue](https://github.com/gitpython-developers/GitPython/issues/1902) with how GitPython handles WSL paths
