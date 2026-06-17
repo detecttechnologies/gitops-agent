@@ -14,6 +14,14 @@ from git import Repo
 from gitops_agent import git_operations as gops
 
 
+# How many days of monitoring-branch history to keep. Anything OLDER than (now - this many days)
+# is squashed into a single synthetic base commit so the orphan monitoring branch doesn't grow
+# without bound. Overridable per-deployment via config.toml ("monitoring_history_retention_days")
+# so it's tunable in prod and easy to set tiny in tests; the module-level default keeps prod
+# behaviour explicit and unchanged when the key is absent.
+MONITORING_HISTORY_RETENTION_DAYS = 30
+
+
 class GitOpsAgent:
     def __init__(self, config_mode):
         self.config_file = Path(os.environ.get("GITOPS_AGENT_CONFIG", "/etc/gitops-agent/config.toml"))
@@ -242,16 +250,37 @@ class GitOpsAgent:
             repo.git.config("user.email", "<>")
             repo.git.commit("-m", commit_message)
 
+        # Trim the monitoring history AFTER the new status commit (so the trim sees the freshest HEAD)
+        # but BEFORE the push, so the push reflects the trimmed branch. A rewrite makes the local
+        # branch diverge from origin (non-fast-forward), so the push below must be a force-push when a
+        # rewrite happened; an ordinary status append stays a normal push.
+        retention_days = self.config.get("monitoring_history_retention_days", MONITORING_HISTORY_RETENTION_DAYS)
+        rewrote_history = trim_monitoring_history(repo, monitoring_branch, retention_days)
+
+        # Compare local-vs-remote using the EXPLICIT monitoring_branch ref, not repo.active_branch:
+        # active_branch raises TypeError on a detached HEAD, which the IndexError guard would not
+        # catch. monitoring_branch is the branch we just committed/trimmed and are about to push, so it
+        # is the correct, always-resolvable ref to gate the push on.
         try:
-            repo_remote_commit = str(repo.remotes.origin.refs[repo.active_branch.name].commit)
+            repo_remote_commit = str(repo.remotes.origin.refs[monitoring_branch].commit)
         except IndexError:
-            repo_remote_commit = None
-        repo_commit_mismatching = str(repo.active_branch.commit) != repo_remote_commit
+            repo_remote_commit = None  # branch not on origin yet (brand-new monitoring branch)
+        repo_commit_mismatching = str(repo.commit(monitoring_branch)) != repo_remote_commit
         if repo_commit_mismatching:
-            repo.git.push("--set-upstream", "origin", monitoring_branch)
+            if rewrote_history:
+                # The rewrite rebased/squashed older history, so the local branch is NOT a
+                # fast-forward of origin -- a normal push would be rejected. Force-push the trimmed
+                # branch. We use plain --force (not --force-with-lease): this is a machine-generated,
+                # single-writer branch (only this agent ever pushes the {branch}-monitoring branch),
+                # so there is no concurrent human writer to clobber, and --force-with-lease would
+                # otherwise need an explicit fetched-ref expectation we don't track here. --set-upstream
+                # keeps the local branch tracking origin so the NEXT normal run pushes cleanly.
+                repo.git.push("--force", "--set-upstream", "origin", monitoring_branch)
+            else:
+                repo.git.push("--set-upstream", "origin", monitoring_branch)
             print(
                 f"Pushed status for {sorted(per_app_feedback)} to file {feedback_file.stem} "
-                f"at branch {monitoring_branch}"
+                f"at branch {monitoring_branch}" + (" (history trimmed)" if rewrote_history else "")
             )
 
         # first_run forces ONE full re-evaluation+rewrite on a fresh agent (it bypasses the in-memory
@@ -401,6 +430,132 @@ def summarize_group_health(feedback):
         overall = f"⚠️ {len(unhealthy)} of {total} apps need attention: {names}"
         commit = f"⚠️ Status: {len(unhealthy)} of {total} issues ({names})"
     return overall, commit
+
+
+def _has_git_identity(repo):
+    """Return True if the repo has both user.name and user.email configured (any scope)."""
+    try:
+        reader = repo.config_reader()
+        return bool(reader.get_value("user", "name", "")) and bool(reader.get_value("user", "email", ""))
+    except Exception:
+        return False
+
+
+def _commits_to_trim(commit_dates, cutoff_ts):
+    """Pure boundary logic: given commit committer-timestamps, decide the trim boundary.
+
+    Args:
+        commit_dates (list[int]): committer epoch-seconds for every commit on the branch, ordered
+            OLDEST first ... NEWEST last (i.e. parent-before-child).
+        cutoff_ts (int/float): epoch-seconds cutoff; a commit is KEPT iff its committer-date >= cutoff.
+
+    Returns:
+        (needs_trim, boundary_index): needs_trim is True only when at least one commit is OLDER than
+        the cutoff (so a rewrite is warranted). boundary_index is the index (into commit_dates) of the
+        NEWEST commit that is older than the cutoff -- that commit's tree becomes the synthetic base and
+        every commit AFTER it (the kept window, all >= cutoff) is replayed on top. When no commit is
+        older than the cutoff, needs_trim is False and boundary_index is None (do nothing). When EVERY
+        commit is older than the cutoff, boundary_index is the last (newest/HEAD) index, so the latest
+        state is preserved as the single base commit and the kept window is empty.
+    """
+    boundary_index = None
+    for i, ts in enumerate(commit_dates):
+        if ts < cutoff_ts:
+            boundary_index = i  # keep advancing to the NEWEST old commit
+    return (boundary_index is not None), boundary_index
+
+
+def trim_monitoring_history(repo, branch, retention_days):
+    """Squash monitoring-branch commits older than (now - retention_days) into one synthetic base.
+
+    The monitoring branch is a machine-generated orphan branch of linear, full-snapshot commits, so
+    its history is purely informational -- nobody branches off it or cherry-picks from it. To stop it
+    growing forever we periodically rewrite it to: [one synthetic base commit holding the tree at the
+    cutoff boundary] + [the commits within the retention window, replayed in order]. Returns True iff
+    it rewrote history (so the caller knows the subsequent push must be a force-push); returns False
+    (and touches nothing) when no commit is older than the cutoff.
+
+    Mechanism (git plumbing, no working-tree churn):
+      1. List the branch's commits oldest-first with committer dates; pick the boundary = newest commit
+         older than the cutoff (see _commits_to_trim). If none, return False.
+      2. Build the synthetic base via ``git commit-tree <boundary-tree>`` with NO parent -> an orphan
+         commit whose tree is byte-for-byte the boundary commit's tree.
+      3. ``git rebase --onto <synthetic-base> <boundary> <branch>`` replays exactly the kept window
+         (commits strictly after the boundary) onto the synthetic base. When the boundary IS HEAD
+         (every commit was old), the window is empty and HEAD simply moves to the synthetic base --
+         whose tree equals the old HEAD's tree, so the current status content is unchanged.
+
+    Replaying changes commit hashes (expected for a rewrite); the INVARIANT we guarantee is that the
+    resulting HEAD tree is identical to the pre-trim HEAD tree -- trimming never alters current status.
+    """
+    # Oldest-first commit list with committer timestamps. iter_commits yields newest-first, so reverse.
+    commits = list(repo.iter_commits(branch))[::-1]
+    if not commits:
+        return False  # brand-new / empty branch -- nothing to trim
+
+    commit_dates = [c.committed_date for c in commits]
+    cutoff = time.time() - retention_days * 86400
+    needs_trim, boundary_index = _commits_to_trim(commit_dates, cutoff)
+    if not needs_trim:
+        return False
+
+    boundary = commits[boundary_index]
+    # Record the pre-trim branch tip + tree so we can (a) verify nothing was lost afterwards and
+    # (b) restore the branch if the rewrite fails partway, so a failed trim never leaves the shared
+    # clone wedged mid-rebase and never lets the caller force-push a half-rewritten branch.
+    head_sha_before = repo.git.rev_parse(branch)
+    head_tree_before = repo.git.rev_parse(f"{branch}^{{tree}}")
+    kept_count = len(commits) - 1 - boundary_index  # commits strictly after the boundary
+
+    # Synthetic base: an orphan commit (no -p) whose tree == the boundary commit's tree.
+    cutoff_date = time.strftime("%Y-%m-%d", time.localtime(cutoff))
+    base_message = f"📉 History trimmed: commits before {cutoff_date} squashed"
+    # commit-tree needs a committer identity; the monitoring repo already has user.name/email
+    # configured (set whenever a status commit is made / the orphan branch is created), but be
+    # defensive in case the helper is called on a freshly-created repo: ensure an identity exists.
+    if not _has_git_identity(repo):
+        repo.git.config("user.name", "gitops-agent")
+        repo.git.config("user.email", "<>")
+    synthetic_base = repo.git.commit_tree(f"{boundary.hexsha}^{{tree}}", "-m", base_message).strip()
+
+    try:
+        if boundary_index == len(commits) - 1:
+            # Every commit is older than the cutoff: the kept window is empty. Just point the branch
+            # at the synthetic base (its tree == old HEAD tree, so the latest state is preserved).
+            repo.git.checkout(branch)
+            repo.git.reset("--hard", synthetic_base)
+        else:
+            # Replay the kept window (commits strictly AFTER the boundary) onto the synthetic base.
+            # --empty=keep so a git-version-dependent "drop empty commits" default can NEVER silently
+            # shorten the kept window (status snapshots can legitimately be no-op diffs vs. their
+            # parent). --committer-date-is-author-date keeps replayed dates stable.
+            repo.git.rebase("--onto", synthetic_base, boundary.hexsha, branch, empty="keep")
+    except Exception as err:
+        # The rewrite failed partway (conflict, hook, disk, ...). Abort any in-progress rebase and put
+        # the branch back exactly where it was, so the next run starts from a clean, correct branch and
+        # the caller never force-pushes a partial rewrite over the good remote.
+        print(f"trim_monitoring_history failed ({err}); aborting rewrite and restoring {branch}")
+        if "rebas" in repo.git.status():
+            repo.git.rebase("--abort")
+        repo.git.checkout(branch)
+        repo.git.reset("--hard", head_sha_before)
+        raise
+
+    # Hard safety guards (a raise, not an assert -- must survive python -O). The rewrite must NEVER
+    # alter the current status content, and must NEVER silently drop a kept-window commit. If either
+    # check fails, restore the branch and fail loud so the caller does not force-push corrupted state.
+    head_tree_after = repo.git.rev_parse(f"{branch}^{{tree}}")
+    commits_after = len(list(repo.iter_commits(branch)))
+    expected_after = kept_count + 1  # kept window + the single synthetic base
+    if head_tree_after != head_tree_before or commits_after != expected_after:
+        repo.git.checkout(branch)
+        repo.git.reset("--hard", head_sha_before)
+        raise RuntimeError(
+            "trim_monitoring_history produced an unexpected result and was rolled back: "
+            f"HEAD tree {head_tree_before} -> {head_tree_after}, "
+            f"commit count {commits_after} (expected {expected_after}); refusing to force-push"
+        )
+    return True
 
 
 def compare_git_hashes(repo_path, git_hash):

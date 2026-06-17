@@ -229,7 +229,7 @@ sudo systemctl restart gitops-agent
 
 - [x] ~~Improve the feedback/monitoring branch to quickly highlight whether everything is alright or if there's an issue.~~ — see [Monitoring feedback & health](#monitoring-feedback--health).
 - [ ] Add app-deletion functionality (e.g. when a section is removed from configuration after being added).
-- [ ] Keep the monitoring branch's commit history trimmed to a fixed period, to avoid bloat.
+- [x] ~~Keep the monitoring branch's commit history trimmed to a fixed period, to avoid bloat.~~ — trims to a 30-day window (configurable via `monitoring_history_retention_days`).
 - [x] ~~Push status back only after all apps have been updated, rather than per individual app.~~
 - [ ] Provide sample GitLab/GitHub pipelines for validating updates to the config repo.
 
