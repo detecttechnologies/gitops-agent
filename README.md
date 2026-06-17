@@ -27,6 +27,7 @@ GitOps Agent is a Python tool that continuously monitors remote Git repositories
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
   - [On-disk layout](#on-disk-layout)
+  - [Monitoring feedback & health](#monitoring-feedback--health)
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
@@ -190,6 +191,21 @@ The agent keeps its working clones under `/opt/gitops-agent/app-configs/`. Multi
 
 `<repo-slug>` is the repository basename without the trailing `.git` (e.g. `git@gitlab.com:Org/Sub/tricon-2025-12.git` → `tricon-2025-12`), and `<url-hash>` is a short hash of the full normalized repo URL. The hash disambiguates two distinct repos that share a basename but live under different namespaces, so they never collapse onto the same directory. Every app that references the same `(repo, branch)` reads its section from — and writes its feedback into — these shared clones, so four apps sharing one config repo result in a single clone (plus one monitoring clone) instead of eight.
 
+### Monitoring feedback & health
+
+After each reconcile pass the agent writes a single feedback file — `<infra_name>.toml` on the `<branch>-monitoring` branch — and commits/pushes it **once per deployment-config repo**, after all of that repo's apps have been processed (not once per app). The file is keyed by application name and carries a quick health summary so you can tell at a glance whether everything is alright:
+
+- **`overall_status`** (top of the file) — `✅ all N apps healthy`, or `⚠️ M of N apps need attention: <names>` when one or more apps have an issue (`⚠️ no apps reported` if none).
+- **Per-app `status`** — one of:
+  - `✅ healthy`
+  - `❌ app update failed` — the application's code repo could not be cloned/fetched/checked out to the desired commit.
+  - `❌ config update failed` — the deployment-config repo could not be updated.
+  - `❌ post-command exited non-zero` — a `pre_updation_command` / `post_updation_command` returned a non-zero exit code.
+  - `❓ unknown status (malformed entry)` — the entry could not be interpreted (e.g. a hand-edited or legacy section).
+- **Commit message** — the single monitoring commit reflects health too, e.g. `✅ Status: all 3 apps healthy` or `⚠️ Status: 1 of 3 issues (dt-iva-5)`, so the branch's commit list is scannable without opening the file.
+
+An app is reported **healthy** only when *both* its config update and app update succeeded **and** every pre/post command exited `0`; otherwise it is flagged, with the label chosen in that order of precedence (app update → config update → commands). Health is derived from these reconcile outcomes — not from parsing the raw `git status` text — so an app that updated cleanly is `✅ healthy` even if its working tree later drifts without causing an update error.
+
 ## Troubleshooting
 
 - This has only been tested on Ubuntu. It is known not to run properly on WSL due to an [issue](https://github.com/gitpython-developers/GitPython/issues/1902) with how GitPython handles WSL paths.
@@ -211,11 +227,11 @@ sudo systemctl restart gitops-agent
 
 ## Roadmap
 
-- Improve the feedback/monitoring branch to quickly highlight whether everything is alright or if there's an issue.
-- Add app-deletion functionality (e.g. when a section is removed from configuration after being added).
-- Keep the monitoring branch's commit history trimmed to a fixed period, to avoid bloat.
-- Push status back only after all apps have been updated, rather than per individual app.
-- Provide sample GitLab/GitHub pipelines for validating updates to the config repo.
+- [x] ~~Improve the feedback/monitoring branch to quickly highlight whether everything is alright or if there's an issue.~~ — see [Monitoring feedback & health](#monitoring-feedback--health).
+- [ ] Add app-deletion functionality (e.g. when a section is removed from configuration after being added).
+- [ ] Keep the monitoring branch's commit history trimmed to a fixed period, to avoid bloat.
+- [x] ~~Push status back only after all apps have been updated, rather than per individual app.~~
+- [ ] Provide sample GitLab/GitHub pipelines for validating updates to the config repo.
 
 ## Contributing
 

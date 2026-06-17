@@ -1,4 +1,5 @@
 import argparse
+import ast
 import json
 import os
 import re
@@ -142,8 +143,15 @@ class GitOpsAgent:
         (the config-updation / app-updation / extra-command-output structure). This updates the
         shared monitoring clone once, merges all apps into the existing {infra_name}.toml (keyed by
         app_name, preserving apps not in this run), applies the extra-command-output carry-forward
-        when nothing was run, writes the file, and commits "Updated status" + pushes at most once --
-        only when the merged content actually changed (no empty commits / no spurious pushes).
+        when nothing was run, derives a per-app `status` and a top-level `overall_status` from the
+        merged content, writes the file, and commits with a health-reflecting message (see
+        summarize_group_health) + pushes at most once -- only when the merged content actually
+        changed (no empty commits / no spurious pushes).
+
+        Apps not seen in this pass are intentionally PRESERVED (carry-forward), so overall_status
+        summarises the whole persisted group, not just the apps reconciled this pass. In practice
+        group_apps_by_repo places every app of a (url, branch) group into per_app_feedback each pass,
+        so a stale entry only lingers if an app is renamed/removed from the deploy config.
         """
         if not per_app_feedback:
             return
@@ -188,6 +196,12 @@ class GitOpsAgent:
             if cmd_logs == "Nothing was run" and isinstance(prior, dict) and "extra-command-output" in prior:
                 app_body["extra-command-output"] = prior["extra-command-output"]
 
+            # Per-app health is a DETERMINISTIC function of the (already-finalised) feedback body, so
+            # adding it here cannot break the no-op optimisation: an identical body yields an identical
+            # status. Compute it AFTER carry-forward so the status reflects the body that gets written,
+            # and BEFORE the unchanged comparison so the new status field participates in that compare.
+            _ok, app_body["status"] = compute_app_status(app_body)
+
             current_feedback[app_name] = app_body
 
             previously = feedback.get(app_name)
@@ -207,6 +221,14 @@ class GitOpsAgent:
         feedback.update(current_feedback)
         feedback["last-updated"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
+        # Top-of-file overall status summarising the WHOLE merged group (every app currently in the
+        # feedback file, not just the ones reconciled this pass), so the health of the site is visible
+        # at a glance. overall_status / commit message are derived deterministically from the same per-app
+        # statuses; the unchanged-detection above already gated on the per-app bodies, so they only ever
+        # change when at least one body did.
+        overall_status, commit_message = summarize_group_health(feedback)
+        feedback["overall_status"] = overall_status
+
         # Dump `feedback` as a toml file at feedback_file path
         with open(feedback_file, "w") as f:
             toml.dump(feedback, f)
@@ -218,7 +240,7 @@ class GitOpsAgent:
             repo.git.add(all=True)
             repo.git.config("user.name", self.infra_name)
             repo.git.config("user.email", "<>")
-            repo.git.commit("-m", "Updated status")
+            repo.git.commit("-m", commit_message)
 
         try:
             repo_remote_commit = str(repo.remotes.origin.refs[repo.active_branch.name].commit)
@@ -227,11 +249,19 @@ class GitOpsAgent:
         repo_commit_mismatching = str(repo.active_branch.commit) != repo_remote_commit
         if repo_commit_mismatching:
             repo.git.push("--set-upstream", "origin", monitoring_branch)
-            self.first_run = False
             print(
                 f"Pushed status for {sorted(per_app_feedback)} to file {feedback_file.stem} "
                 f"at branch {monitoring_branch}"
             )
+
+        # first_run forces ONE full re-evaluation+rewrite on a fresh agent (it bypasses the in-memory
+        # "nothing changed" skip above). That job is done once we've completed this reconcile pass --
+        # whether or not git ultimately produced a commit. Clearing it only inside the push branch left
+        # a latent bug: when a first_run rewrite was byte-identical (e.g. same-second last-updated), no
+        # commit was made AND first_run stayed True, so the NEXT pass would bypass the skip again and
+        # could push a spurious commit if the timestamp then advanced. Clear it here so subsequent
+        # unchanged passes correctly no-op.
+        self.first_run = False
 
 
 def build_app_feedback(cfg_git_stats, app_git_stats, cmd_stats):
@@ -260,6 +290,117 @@ def build_app_feedback(cfg_git_stats, app_git_stats, cmd_stats):
         "extra-command-output": {"command-return-val": str(cmd_ret), "command-run-logs": str(cmd_logs)},
         "_cmd_logs": cmd_logs,
     }
+
+
+def compute_app_status(app_feedback):
+    """Return (ok, label) summarising one app's health from its feedback body. Pure, no I/O.
+
+    An app is HEALTHY when BOTH its config-updation and app-updation "updation-return-value" are
+    truthy AND every return code in its extra-command-output "command-return-val" is 0 or None
+    (a check-only pass / empty / unparseable command-return-val is treated as no command failure).
+    Otherwise it is an ISSUE; the label names the failing aspect in priority order: app update, then
+    config update, then post-command (so when both updates fail the label is "app update failed").
+    A malformed/legacy entry (missing keys, wrong shape) must NOT raise -- it is reported as an
+    unknown issue so one bad app never aborts the whole group's status reporting.
+
+    Args:
+        app_feedback (dict): one app's feedback body (config-updation / app-updation /
+            extra-command-output), as produced by build_app_feedback (after _cmd_logs is popped).
+
+    Returns:
+        tuple(bool, str): (is_healthy, label) -- e.g. (True, "✅ healthy") or (False, "❌ app update failed").
+    """
+    if not isinstance(app_feedback, dict):
+        return False, "❓ unknown status (malformed entry)"
+
+    cfg = app_feedback.get("config-updation")
+    app = app_feedback.get("app-updation")
+    if not isinstance(cfg, dict) or not isinstance(app, dict):
+        return False, "❓ unknown status (malformed entry)"
+
+    if not app.get("updation-return-value"):
+        return False, "❌ app update failed"
+    if not cfg.get("updation-return-value"):
+        return False, "❌ config update failed"
+
+    if _post_command_failed(app_feedback.get("extra-command-output")):
+        return False, "❌ post-command exited non-zero"
+
+    return True, "✅ healthy"
+
+
+def _post_command_failed(extra_command_output):
+    """Return True only if a parsed post/pre command return code is a non-zero, non-None failure.
+
+    The command-return-val is stored as str(dict): "{}" (no commands configured), "{'post': 0}",
+    or "{'pre': 1, 'post': 0}" on an update pass; or the str "True" on a check-only pass (the
+    "Nothing was run" sentinel lives in the sibling command-run-logs, not here). Anything that does
+    not parse into a dict of return codes is treated as "no command failure" (robust to legacy/edited
+    entries) -- we only flag a genuine non-zero/parseable failure.
+    """
+    if not isinstance(extra_command_output, dict):
+        return False
+    raw = extra_command_output.get("command-return-val")
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        parsed = ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        # Leave a breadcrumb: we cannot confirm command health from this value, so we fail OPEN
+        # (no failure) to avoid one bad/legacy entry flipping the whole group, but a silent
+        # false-"healthy" with no trace would defeat the monitoring. Don't raise.
+        print(f"WARNING: command-return-val {raw!r} is not parseable; treating as no command failure")
+        return False
+    if not isinstance(parsed, dict):
+        print(
+            f"WARNING: command-return-val {raw!r} parsed to a {type(parsed).__name__}, not a "
+            f"return-code dict; treating as no command failure"
+        )
+        return False
+    for code in parsed.values():
+        if code is None:
+            continue
+        try:
+            if int(code) != 0:
+                return True
+        except (TypeError, ValueError):
+            # A non-numeric return code is unexpected; treat it as a failure to be safe.
+            return True
+    return False
+
+
+def summarize_group_health(feedback):
+    """Return (overall_status, commit_message) for the whole merged feedback file. Pure, no I/O.
+
+    Scans every app entry in the merged feedback (skipping the top-level scalar/meta keys like
+    "last-updated" / "overall_status"), recomputes each app's health, and produces a top-of-file
+    overall_status string and a health-reflecting commit message for the single per-group commit.
+
+    Examples:
+        ("✅ all 3 apps healthy", "✅ Status: all 3 apps healthy")
+        ("⚠️ 1 of 3 apps need attention: dt-iva-5", "⚠️ Status: 1 of 3 issues (dt-iva-5)")
+    """
+    meta_keys = {"last-updated", "overall_status"}
+    app_names = sorted(name for name, body in feedback.items() if name not in meta_keys and isinstance(body, dict))
+
+    unhealthy = []
+    for name in app_names:
+        ok, _label = compute_app_status(feedback[name])
+        if not ok:
+            unhealthy.append(name)
+
+    total = len(app_names)
+    if total == 0:
+        return "⚠️ no apps reported", "⚠️ Status: no apps reported"
+
+    if not unhealthy:
+        overall = f"✅ all {total} apps healthy"
+        commit = f"✅ Status: all {total} apps healthy"
+    else:
+        names = ", ".join(unhealthy)
+        overall = f"⚠️ {len(unhealthy)} of {total} apps need attention: {names}"
+        commit = f"⚠️ Status: {len(unhealthy)} of {total} issues ({names})"
+    return overall, commit
 
 
 def compare_git_hashes(repo_path, git_hash):
