@@ -92,12 +92,25 @@ def make_app_code_repo_two_commits(tmp_path, name):
     return url, first, second
 
 
+def _is_status_commit(msg):
+    """A per-group monitoring status commit now carries a health-reflecting message.
+
+    The static "Updated status" was replaced by summarize_group_health output, which always begins
+    with a health marker prefix ("✅ Status:" when all healthy, "⚠️ Status:" when any app needs
+    attention). Anything that starts with "Status:" after the marker is one of our status commits
+    (and NOT the orphan-branch "Initial commit").
+    """
+    return msg.startswith("✅ Status:") or msg.startswith("⚠️ Status:")
+
+
 def status_commits(bare, branch="main-monitoring"):
-    """Return count of 'Updated status' commits on the monitoring branch of the bare remote."""
+    """Return count of health-status commits on the monitoring branch of the bare remote."""
     return sum(
         1 for h in remote_branch_commits(bare, branch)
-        if sp.run(["git", "log", "-1", "--pretty=%s", h], cwd=str(bare),
-                  capture_output=True, text=True).stdout.strip() == "Updated status"
+        if _is_status_commit(
+            sp.run(["git", "log", "-1", "--pretty=%s", h], cwd=str(bare),
+                   capture_output=True, text=True).stdout.strip()
+        )
     )
 
 
@@ -212,7 +225,7 @@ def test_one_commit_per_pass_not_per_app(env, tmp_path):
                capture_output=True, text=True).stdout.strip()
         for h in commits
     ]
-    assert msgs.count("Updated status") == 1, msgs
+    assert sum(_is_status_commit(m) for m in msgs) == 1, msgs
 
     # The merged feedback file holds ALL apps.
     feedback = remote_branch_file(bare, "main-monitoring", "testsite.toml", tmp_path, "mon1")
@@ -240,7 +253,7 @@ def test_push_once_single_new_commit(env, tmp_path):
                capture_output=True, text=True).stdout.strip()
         for h in remote_branch_commits(bare, "main-monitoring")
     ]
-    assert msgs.count("Updated status") == 1
+    assert sum(_is_status_commit(m) for m in msgs) == 1
     assert after > before
 
 
@@ -292,8 +305,8 @@ def test_incremental_one_new_commit_changed_app_updated(env, tmp_path):
     commits_1 = remote_branch_commits(bare, "main-monitoring")
     status_count_1 = sum(
         1 for h in commits_1
-        if sp.run(["git", "log", "-1", "--pretty=%s", h], cwd=str(bare),
-                  capture_output=True, text=True).stdout.strip() == "Updated status"
+        if _is_status_commit(sp.run(["git", "log", "-1", "--pretty=%s", h], cwd=str(bare),
+                                    capture_output=True, text=True).stdout.strip())
     )
     assert status_count_1 == 1
 
@@ -308,8 +321,8 @@ def test_incremental_one_new_commit_changed_app_updated(env, tmp_path):
     commits_2 = remote_branch_commits(bare, "main-monitoring")
     status_count_2 = sum(
         1 for h in commits_2
-        if sp.run(["git", "log", "-1", "--pretty=%s", h], cwd=str(bare),
-                  capture_output=True, text=True).stdout.strip() == "Updated status"
+        if _is_status_commit(sp.run(["git", "log", "-1", "--pretty=%s", h], cwd=str(bare),
+                                    capture_output=True, text=True).stdout.strip())
     )
     # Exactly ONE additional status commit from the second pass.
     assert status_count_2 == status_count_1 + 1, (status_count_1, status_count_2)
