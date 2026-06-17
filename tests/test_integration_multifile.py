@@ -24,7 +24,16 @@ from git import Repo
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from gitops_agent import git_operations as gops  # noqa: E402
-from gitops_agent.agent import GitOpsAgent  # noqa: E402
+from gitops_agent.agent import GitOpsAgent, shared_clone_path  # noqa: E402
+
+
+def _drift_verdict(agent, deploy_url, branch="main", app="myapp"):
+    """Return whether `app` would be flagged for update right now (the drift decision that the
+    old per-app pull_dep_cfg used to return, now produced by run_once's grouping + evaluate_app)."""
+    shared = shared_clone_path(deploy_url, branch)
+    initial = gops.check_deployment_config(shared, app, INFRA)
+    to_update, _ = agent.evaluate_app(app, shared, initial)
+    return to_update
 
 INFRA = "test-infra"
 
@@ -366,7 +375,7 @@ def test_missing_src_does_not_retrigger_update(tmp_path, monkeypatch):
     agent.run_once()
     # After both passes, the missing-src entry must NOT be reported as drift; otherwise the app
     # would be flagged for update on every single pass forever.
-    update_again, _, _ = agent.pull_dep_cfg("myapp", deploy_url, "main")
+    update_again = _drift_verdict(agent, deploy_url)
     assert update_again is False
     assert dst_ok.read_text() == "OK\n"
     assert not dst_missing.exists()
@@ -405,7 +414,7 @@ def test_idempotent_second_run_no_update(tmp_path, monkeypatch):
     agent.run_once()
     mtime1 = dst1.stat().st_mtime_ns
 
-    update2, _, _ = agent.pull_dep_cfg("myapp", deploy_url, "main")
+    update2 = _drift_verdict(agent, deploy_url)
     assert update2 is False
     # Files untouched.
     assert dst1.read_text() == "k=1\n"
@@ -442,7 +451,7 @@ def test_drift_correction_restores_dst(tmp_path, monkeypatch):
     # Externally tamper with the deployed config.
     dst.write_text("TAMPERED=999\n")
 
-    update2, _, _ = agent.pull_dep_cfg("myapp", deploy_url, "main")
+    update2 = _drift_verdict(agent, deploy_url)
     assert update2 is True
     agent.run_once()
     assert dst.read_text() == "good=1\n"

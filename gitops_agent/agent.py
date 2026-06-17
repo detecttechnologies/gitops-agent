@@ -34,28 +34,44 @@ class GitOpsAgent:
             time.sleep(self.interval)
 
     def run_once(self):
-        """Run exactly one reconcile pass over all configured apps."""
-        for app_name, app_config_url in self.apps.items():
-            # First check the deployment config, and then update the apps if required
-            app_config_url, app_config_branch = parse_config(app_config_url)
-            to_update, updated_cfg, cfg_git_stats = self.pull_dep_cfg(app_name, app_config_url, app_config_branch)
-            if to_update:
-                app_git_stats, cmd_stats = self.pull_app(app_name, updated_cfg)
-            else:
-                app_git_stats, cmd_stats = self.check_app(updated_cfg)
-            self.push_status(app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats)
+        # All apps share a single deployment-config repo per (url, branch), so clone each unique
+        # (url, branch) exactly once into a shared dir, and let every app that references it read from there
+        grouped = group_apps_by_repo(self.apps)
+        for (app_config_url, app_config_branch), app_names in grouped.items():
+            slug = gops.repo_slug(app_config_url)
+            dep_cfg_local_path = shared_clone_path(app_config_url, app_config_branch)
 
-    def pull_dep_cfg(self, app_name, app_config_url, app_config_branch):
-        initial_config = gops.check_deployment_config(app_name, self.infra_name)
-        dep_cfg_local_path = str(Path(gops.APP_CONFIGS_DIR, app_name))
-        ret, status, comm = gops.update_git_repo(
-            f"{app_name}-config",
-            app_config_url,
-            app_config_branch,
-            self.infra_name,
-            dep_cfg_local_path,
-        )
-        final_config = gops.check_deployment_config(app_name, self.infra_name)
+            # Snapshot each app's config before the clone/fetch (empty dict if not yet cloned),
+            # so we can still detect a first-time clone the way the per-app flow used to
+            initial_configs = {
+                name: gops.check_deployment_config(dep_cfg_local_path, name, self.infra_name)
+                for name in app_names
+            }
+
+            # Clone/fetch the shared deployment-config repo ONCE for this (url, branch) group
+            cfg_git_stats = gops.update_git_repo(
+                f"{slug}@{app_config_branch}-config",
+                app_config_url,
+                app_config_branch,
+                self.infra_name,
+                dep_cfg_local_path,
+            )
+
+            # Then process every app that resolves to this shared clone
+            for app_name in app_names:
+                to_update, updated_cfg = self.evaluate_app(
+                    app_name, dep_cfg_local_path, initial_configs[app_name]
+                )
+                if to_update:
+                    app_git_stats, cmd_stats = self.pull_app(app_name, updated_cfg)
+                else:
+                    app_git_stats, cmd_stats = self.check_app(updated_cfg)
+                self.push_status(
+                    app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats
+                )
+
+    def evaluate_app(self, app_name, dep_cfg_local_path, initial_config):
+        final_config = gops.check_deployment_config(dep_cfg_local_path, app_name, self.infra_name)
         gops.claim_ownership(final_config["code_local_path"])
 
         config_changed_at_repo = set(initial_config) - set(final_config)
@@ -73,7 +89,7 @@ class GitOpsAgent:
         app_to_be_updated = any(
             (config_changed_at_repo, code_not_cloned, config_contents_dont_match, code_not_at_desired_hash)
         )
-        return app_to_be_updated, final_config, (ret, status, comm)
+        return app_to_be_updated, final_config
 
     def pull_app(self, app_name, app_config):
         pre_updation_command = app_config["pre_updation_command"]
@@ -119,14 +135,16 @@ class GitOpsAgent:
         cfg_ret, cfg_status, cfg_commit = cfg_git_stats
         cmd_ret, cmd_logs = cmd_stats
 
-        app_name2 = f"{app_name}-monitoring"
-        app_config_branch = f"{app_config_branch}-monitoring"
-        dep_feedback_local_path = str(Path(gops.APP_CONFIGS_DIR, app_name2))
+        slug = gops.repo_slug(app_config_url)
+        monitoring_branch = f"{app_config_branch}-monitoring"
+        # Shared monitoring clone per (url, branch); the feedback file merges every app keyed by app_name
+        dep_feedback_local_path = shared_clone_path(app_config_url, app_config_branch) + "-monitoring"
+        repo_label = f"{slug}@{app_config_branch}-monitoring"
 
         gops.update_git_repo(
-            app_name2,
+            repo_label,
             app_config_url,
-            app_config_branch,
+            monitoring_branch,
             self.infra_name,
             dep_feedback_local_path,
             create_branch=True,
@@ -178,7 +196,7 @@ class GitOpsAgent:
             f.write("\n# You can render the escaped text with https://onlinetexttools.com/unescape-text\n")
 
         # Add, commit and push the changes
-        repo = Repo(str(Path(gops.APP_CONFIGS_DIR, app_name2)))
+        repo = Repo(dep_feedback_local_path)
         if repo.is_dirty() or repo.untracked_files:
             repo.git.add(all=True)
             repo.git.config("user.name", self.infra_name)
@@ -191,9 +209,9 @@ class GitOpsAgent:
             repo_remote_commit = None
         repo_commit_mismatching = str(repo.active_branch.commit) != repo_remote_commit
         if repo_commit_mismatching:
-            repo.git.push("--set-upstream", "origin", app_config_branch)
+            repo.git.push("--set-upstream", "origin", monitoring_branch)
             self.first_run = False
-            print(f"Pushed status for {app_name} to file {feedback_file.stem} at branch {app_config_branch}")
+            print(f"Pushed status for {app_name} to file {feedback_file.stem} at branch {monitoring_branch}")
 
 
 def compare_git_hashes(repo_path, git_hash):
@@ -218,9 +236,43 @@ def compare_file_contents(f1, f2):
     return strip_and_compare(f1, f2)
 
 
+def shared_clone_path(url, branch):
+    """Return the on-disk path for the shared deployment-config clone of a (repo url, branch).
+
+    The path is keyed on the FULL repo url (via a short hash), not just the basename, so two
+    distinct repos that share a basename but live under different namespaces/orgs/hosts (e.g.
+    OrgA/deploy vs OrgB/deploy) never collapse onto the same directory. The human-readable slug
+    is kept as a prefix for legibility; the hash provides the disambiguation.
+    """
+    slug = gops.repo_slug(url)
+    return str(gops.APP_CONFIGS_DIR / f"{slug}@{branch}-{gops.url_hash(url)}")
+
+
+def group_apps_by_repo(apps):
+    """Group app entries by their (deploy-config-url, branch) so each repo is cloned only once.
+
+    Args:
+        apps: mapping of app_name -> "git_url@branch" (the [applications] table from config.toml).
+
+    Returns:
+        An ordered mapping of (git_url, branch) -> list of app_names that reference it. Order of
+        first appearance is preserved so behaviour stays deterministic.
+    """
+    grouped = {}
+    for app_name, app_config_url in apps.items():
+        url, branch = parse_config(app_config_url)
+        grouped.setdefault((url, branch), []).append(app_name)
+    return grouped
+
+
 def parse_config(git_url):
-    if "@" in git_url.replace("git@", "", 1):
-        _, git_branch = git_url.rsplit("@", 1)
+    # The only "@" that is NOT a branch separator is the scp-style userinfo prefix, which appears
+    # at the very start of the url (git@host:path). Strip just that leading prefix before scanning
+    # for a branch "@", so urls whose path ends in ".git@branch" (https or file://) are handled
+    # correctly -- a blanket str.replace("git@", "") would also eat the ".git@" in such urls.
+    scan = git_url[len("git@"):] if git_url.startswith("git@") else git_url
+    if "@" in scan:
+        _, git_branch = scan.rsplit("@", 1)
     else:
         git_branch = "main"
 

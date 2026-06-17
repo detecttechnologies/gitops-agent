@@ -144,6 +144,20 @@ keys are present, no config files are copied.
 Optional `pre_updation_command` / `post_updation_command` strings can also be set per app to run
 shell commands before/after the update.
 
+### 2.6 On-Disk Layout
+
+The agent keeps its working clones under `/opt/gitops-agent/app-configs/`. Multiple applications usually share a single deployment-config repository (one `infra_meta.toml` describes them all), so the agent clones each **unique** `(deploy-config-repo, branch)` exactly once into a shared directory named `<repo-slug>@<branch>-<url-hash>`:
+
+```
+/opt/gitops-agent/app-configs/
+├── <repo-slug>@<branch>-<url-hash>/             # one shared clone of the deployment-config repo
+│   └── <infra_name>/infra_meta.toml             # describes all apps for this infra
+└── <repo-slug>@<branch>-<url-hash>-monitoring/  # one shared clone on the <branch>-monitoring branch
+    └── <infra_name>.toml                         # merged feedback file, keyed by app_name
+```
+
+`<repo-slug>` is the repository basename without the trailing `.git` (e.g. `git@gitlab.com:Org/Sub/tricon-2025-12.git` → `tricon-2025-12`), and `<url-hash>` is a short hash of the **full** normalized repo URL. The hash disambiguates two distinct repos that share a basename but live under different namespaces/orgs/hosts (e.g. `OrgA/deploy` vs `OrgB/deploy`) so they never collapse onto the same on-disk directory. Every app that references the same `(repo, branch)` reads its section from, and writes its feedback into, these shared clones — so four apps sharing one config repo result in a single clone (plus one monitoring clone) instead of eight. As an additional safety net, the agent refuses to fetch/reset an existing clone whose `origin` does not match the expected URL, erroring loudly instead of operating on the wrong repo.
+
 ## Troubleshooting
 
 - Please note that this has only been tested on Ubuntu. It is known to not run properly on WSL due to an [issue](https://github.com/gitpython-developers/GitPython/issues/1902) with how GitPython handles WSL paths
