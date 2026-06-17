@@ -57,7 +57,10 @@ class GitOpsAgent:
                 dep_cfg_local_path,
             )
 
-            # Then process every app that resolves to this shared clone
+            # Then process every app that resolves to this shared clone, collecting each app's
+            # feedback. The merged feedback is committed+pushed to the monitoring branch EXACTLY
+            # ONCE for this (url, branch) group (see flush_status), instead of once per app.
+            per_app_feedback = {}
             for app_name in app_names:
                 to_update, updated_cfg = self.evaluate_app(
                     app_name, dep_cfg_local_path, initial_configs[app_name]
@@ -66,9 +69,11 @@ class GitOpsAgent:
                     app_git_stats, cmd_stats = self.pull_app(app_name, updated_cfg)
                 else:
                     app_git_stats, cmd_stats = self.check_app(updated_cfg)
-                self.push_status(
-                    app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats
+                per_app_feedback[app_name] = build_app_feedback(
+                    cfg_git_stats, app_git_stats, cmd_stats
                 )
+
+            self.flush_status(app_config_url, app_config_branch, per_app_feedback)
 
     def evaluate_app(self, app_name, dep_cfg_local_path, initial_config):
         final_config = gops.check_deployment_config(dep_cfg_local_path, app_name, self.infra_name)
@@ -130,10 +135,18 @@ class GitOpsAgent:
         cmd_stats = (True, "Nothing was run")
         return (True, status, commit), cmd_stats
 
-    def push_status(self, app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats):
-        app_ret, app_status, app_commit = app_git_stats
-        cfg_ret, cfg_status, cfg_commit = cfg_git_stats
-        cmd_ret, cmd_logs = cmd_stats
+    def flush_status(self, app_config_url, app_config_branch, per_app_feedback):
+        """Merge every app's feedback for one (url, branch) group and commit+push it ONCE.
+
+        per_app_feedback maps app_name -> the per-app feedback body produced by build_app_feedback
+        (the config-updation / app-updation / extra-command-output structure). This updates the
+        shared monitoring clone once, merges all apps into the existing {infra_name}.toml (keyed by
+        app_name, preserving apps not in this run), applies the extra-command-output carry-forward
+        when nothing was run, writes the file, and commits "Updated status" + pushes at most once --
+        only when the merged content actually changed (no empty commits / no spurious pushes).
+        """
+        if not per_app_feedback:
+            return
 
         slug = gops.repo_slug(app_config_url)
         monitoring_branch = f"{app_config_branch}-monitoring"
@@ -150,52 +163,56 @@ class GitOpsAgent:
             create_branch=True,
         )
 
-        current_feedback = {
-            app_name: {
-                "config-updation": {
-                    "updation-return-value": cfg_ret,
-                    "git-status": cfg_status,
-                    "git-repo-latest-commit": cfg_commit,
-                },
-                "app-updation": {
-                    "updation-return-value": app_ret,
-                    "git-status": app_status,
-                    "git-repo-latest-commit": app_commit,
-                },
-                "extra-command-output": {"command-return-val": str(cmd_ret), "command-run-logs": str(cmd_logs)},
-            },
-            "last-updated": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        }
-
         feedback_file = Path(f"{dep_feedback_local_path}/{self.infra_name}.toml")
         if feedback_file.exists():
             with open(feedback_file) as f:
                 feedback = toml.load(f)
         else:
-            feedback = {app_name: {"config-updation": {}, "app-updation": {}, "extra-command-output": {}}}
+            feedback = {}
 
-        # app_name will not be in feedback if it's the 1st time running for the current app (while it has run for other apps)
-        if cmd_logs == "Nothing was run" and app_name in feedback:
-            current_feedback[app_name]["extra-command-output"] = feedback[app_name]["extra-command-output"]
+        # Build the merged feedback for THIS run: every app in per_app_feedback gets its fresh body,
+        # with the extra-command-output carry-forward applied per app when nothing was run.
+        current_feedback = {}
+        anything_changed = False
+        for app_name, app_body in per_app_feedback.items():
+            app_body = dict(app_body)  # copy: don't mutate the caller's dict
+            cmd_logs = app_body.pop("_cmd_logs")
 
-        if (
-            app_name in feedback
-            and app_name in current_feedback
-            and json.dumps(feedback[app_name], sort_keys=True)
-            == json.dumps(current_feedback[app_name], sort_keys=True)
-            and not self.first_run
-        ):
-            print(f"Nothing to update for {app_name}...")
+            # app_name will not be in feedback if it's the 1st time running for this app (while it has
+            # run for other apps). Carry forward the previous extra-command-output when nothing was run.
+            # Guard the lookup: the feedback file lives on a (remote) monitoring branch and may have
+            # been hand-edited or written by an older schema, so a present app entry is not guaranteed
+            # to carry extra-command-output. Skipping the carry-forward for one malformed entry must
+            # not abort status reporting for every other app in this group.
+            prior = feedback.get(app_name)
+            if cmd_logs == "Nothing was run" and isinstance(prior, dict) and "extra-command-output" in prior:
+                app_body["extra-command-output"] = prior["extra-command-output"]
+
+            current_feedback[app_name] = app_body
+
+            previously = feedback.get(app_name)
+            if (
+                previously is not None
+                and json.dumps(previously, sort_keys=True) == json.dumps(app_body, sort_keys=True)
+                and not self.first_run
+            ):
+                print(f"Nothing to update for {app_name}...")
+            else:
+                anything_changed = True
+
+        if not anything_changed:
+            print(f"Nothing to update for {monitoring_branch}...")
             return
 
         feedback.update(current_feedback)
+        feedback["last-updated"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
         # Dump `feedback` as a toml file at feedback_file path
         with open(feedback_file, "w") as f:
             toml.dump(feedback, f)
             f.write("\n# You can render the escaped text with https://onlinetexttools.com/unescape-text\n")
 
-        # Add, commit and push the changes
+        # Add, commit and push the changes ONCE for this group
         repo = Repo(dep_feedback_local_path)
         if repo.is_dirty() or repo.untracked_files:
             repo.git.add(all=True)
@@ -211,7 +228,38 @@ class GitOpsAgent:
         if repo_commit_mismatching:
             repo.git.push("--set-upstream", "origin", monitoring_branch)
             self.first_run = False
-            print(f"Pushed status for {app_name} to file {feedback_file.stem} at branch {monitoring_branch}")
+            print(
+                f"Pushed status for {sorted(per_app_feedback)} to file {feedback_file.stem} "
+                f"at branch {monitoring_branch}"
+            )
+
+
+def build_app_feedback(cfg_git_stats, app_git_stats, cmd_stats):
+    """Return one app's feedback body (no I/O).
+
+    Produces the per-app config-updation / app-updation / extra-command-output structure that
+    flush_status merges into the {infra_name}.toml keyed by app_name. The raw cmd_logs is stashed
+    under the private "_cmd_logs" key so flush_status can apply the "Nothing was run" carry-forward;
+    flush_status pops it before the body is written/compared, so it never reaches the feedback file.
+    """
+    app_ret, app_status, app_commit = app_git_stats
+    cfg_ret, cfg_status, cfg_commit = cfg_git_stats
+    cmd_ret, cmd_logs = cmd_stats
+
+    return {
+        "config-updation": {
+            "updation-return-value": cfg_ret,
+            "git-status": cfg_status,
+            "git-repo-latest-commit": cfg_commit,
+        },
+        "app-updation": {
+            "updation-return-value": app_ret,
+            "git-status": app_status,
+            "git-repo-latest-commit": app_commit,
+        },
+        "extra-command-output": {"command-return-val": str(cmd_ret), "command-run-logs": str(cmd_logs)},
+        "_cmd_logs": cmd_logs,
+    }
 
 
 def compare_git_hashes(repo_path, git_hash):
