@@ -15,7 +15,7 @@ from gitops_agent import git_operations as gops
 
 class GitOpsAgent:
     def __init__(self, config_mode):
-        self.config_file = Path("/etc", "gitops-agent", "config.toml")
+        self.config_file = Path(os.environ.get("GITOPS_AGENT_CONFIG", "/etc/gitops-agent/config.toml"))
         self.config = toml.load(self.config_file)
         self.apps = self.config.get("applications", [])
         self.interval = self.config.get("interval", 300)
@@ -29,21 +29,25 @@ class GitOpsAgent:
             sp.call([default_editor, self.config_file])
             return
         while True:
-            for app_name, app_config_url in self.apps.items():
-                # First check the deployment config, and then update the apps if required
-                app_config_url, app_config_branch = parse_config(app_config_url)
-                to_update, updated_cfg, cfg_git_stats = self.pull_dep_cfg(app_name, app_config_url, app_config_branch)
-                if to_update:
-                    app_git_stats, cmd_stats = self.pull_app(app_name, updated_cfg)
-                else:
-                    app_git_stats, cmd_stats = self.check_app(updated_cfg)
-                self.push_status(app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats)
+            self.run_once()
             print(f"Sleeping for {self.interval} seconds...")
             time.sleep(self.interval)
 
+    def run_once(self):
+        """Run exactly one reconcile pass over all configured apps."""
+        for app_name, app_config_url in self.apps.items():
+            # First check the deployment config, and then update the apps if required
+            app_config_url, app_config_branch = parse_config(app_config_url)
+            to_update, updated_cfg, cfg_git_stats = self.pull_dep_cfg(app_name, app_config_url, app_config_branch)
+            if to_update:
+                app_git_stats, cmd_stats = self.pull_app(app_name, updated_cfg)
+            else:
+                app_git_stats, cmd_stats = self.check_app(updated_cfg)
+            self.push_status(app_name, app_config_url, app_config_branch, cfg_git_stats, app_git_stats, cmd_stats)
+
     def pull_dep_cfg(self, app_name, app_config_url, app_config_branch):
         initial_config = gops.check_deployment_config(app_name, self.infra_name)
-        dep_cfg_local_path = f"/opt/gitops-agent/app-configs/{app_name}"
+        dep_cfg_local_path = str(Path(gops.APP_CONFIGS_DIR, app_name))
         ret, status, comm = gops.update_git_repo(
             f"{app_name}-config",
             app_config_url,
@@ -59,8 +63,12 @@ class GitOpsAgent:
         code_not_at_desired_hash = not compare_git_hashes(
             final_config["code_local_path"], final_config["code_commit_hash"]
         )
-        config_contents_dont_match = not compare_file_contents(
-            final_config["config_dst_path_abs"], final_config["config_src_path_abs"]
+        # Only consider pairs whose source exists. A missing source is skipped at copy time
+        # (see pull_app), so flagging it as drift here would cause a perpetual update loop.
+        config_contents_dont_match = any(
+            not compare_file_contents(pair["dst_abs"], pair["src_abs"])
+            for pair in final_config["config_file_pairs"]
+            if pair["src_abs"].exists()
         )
         app_to_be_updated = any(
             (config_changed_at_repo, code_not_cloned, config_contents_dont_match, code_not_at_desired_hash)
@@ -86,9 +94,14 @@ class GitOpsAgent:
             target_path,
             checkout_hash=app_config["code_commit_hash"],
         )
-        # copy config file to code folder
-        if app_config["config_src_path_abs"] and app_config["config_dst_path_abs"]:
-            shutil.copy2(app_config["config_src_path_abs"], app_config["config_dst_path_abs"])
+        # copy each config file to its destination
+        for pair in app_config["config_file_pairs"]:
+            src_abs, dst_abs = pair["src_abs"], pair["dst_abs"]
+            if not src_abs.exists():
+                print(f"Skipping config copy for {app_name}: source {src_abs} does not exist")
+                continue
+            Path(dst_abs).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_abs, dst_abs)
 
         if post_updation_command:
             print(f"Executing post-update command for {app_name}: {post_updation_command}...")
@@ -108,7 +121,7 @@ class GitOpsAgent:
 
         app_name2 = f"{app_name}-monitoring"
         app_config_branch = f"{app_config_branch}-monitoring"
-        dep_feedback_local_path = f"/opt/gitops-agent/app-configs/{app_name2}"
+        dep_feedback_local_path = str(Path(gops.APP_CONFIGS_DIR, app_name2))
 
         gops.update_git_repo(
             app_name2,
@@ -165,7 +178,7 @@ class GitOpsAgent:
             f.write("\n# You can render the escaped text with https://onlinetexttools.com/unescape-text\n")
 
         # Add, commit and push the changes
-        repo = Repo(f"/opt/gitops-agent/app-configs/{app_name2}")
+        repo = Repo(str(Path(gops.APP_CONFIGS_DIR, app_name2)))
         if repo.is_dirty() or repo.untracked_files:
             repo.git.add(all=True)
             repo.git.config("user.name", self.infra_name)
